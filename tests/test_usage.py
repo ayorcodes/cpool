@@ -138,7 +138,7 @@ def test_poll_missing_credentials_marks_auth_missing(tmp_path, monkeypatch):
 
 def test_statusline_writes_state(tmp_path, monkeypatch, capsys):
     _setup_statusline(tmp_path, monkeypatch, 1_000_000)
-    payload = {"session_id": "s1", "model": {"id": "m"}, "workspace": {"current_dir": "/w"},
+    payload = {"session_id": "s1", "model": {"id": "m"}, "effort": {"level": "high"}, "workspace": {"current_dir": "/w"},
                "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": 1793543399},
                                "seven_day": {"used_percentage": 11, "resets_at": 1793900000}},
                "context_window": {"used_percentage": 18}, "prompt_cache": {"read": 3, "created": 1}}
@@ -149,5 +149,6 @@ def test_statusline_writes_state(tmp_path, monkeypatch, capsys):
     assert st["accounts"]["a"]["source"] == "statusline"
     s = st["sessions"]["s1"]
     assert (s["account"], s["run"], s["cwd"], s["model"], s["ctx_used"]) == ("a", "run-1", "/w", "m", 18.0)
+    assert s["effort"] == "high"
     assert s["cache"] == {"read": 3, "created": 1} and s["turns"][0]["u5h"] == 40.0
     assert capsys.readouterr().out.strip() == "cpool:a 5h 40% 7d 11%"

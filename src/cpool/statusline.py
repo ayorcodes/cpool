@@ -64,6 +64,8 @@ def _record(payload: dict) -> str | None:
     five, seven = _window(payload, "five_hour"), _window(payload, "seven_day")
     sid = payload.get("session_id")
     model = (payload.get("model") or {}).get("id")
+    eff = payload.get("effort")
+    effort = eff.get("level") if isinstance(eff, dict) else None
     cwd = (payload.get("workspace") or {}).get("current_dir") or payload.get("cwd")
     ctx = _num((payload.get("context_window") or {}).get("used_percentage"))
     cache = payload.get("prompt_cache")
@@ -84,6 +86,8 @@ def _record(payload: dict) -> str | None:
                 s["leave_manual"] = False  # a manual switch is spent once the session is on another account
             s.update(account=acct.name, run=os.environ.get("CPOOL_RUN"), pid=pid, cwd=cwd,
                      model=model, updated_at=now, ctx_used=ctx, cache=cache if isinstance(cache, dict) else {})
+            if isinstance(effort, str) and effort:
+                s["effort"] = effort
             s.setdefault("started_at", now)
             turns = s.get("turns") if isinstance(s.get("turns"), list) else []
             if five and (not turns or turns[-1].get("u5h") != five["used"]):
