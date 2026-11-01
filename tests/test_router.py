@@ -48,6 +48,10 @@ CASES = {
         dict(main=acct(0), pro=acct(50)), dict(current="main", forced=True), "pro", "best"),
     "cooldown": (
         dict(main=acct(0, left_at=NOW - 60), pro=acct(50)), {}, "pro", "best"),
+    "cooldown_ignored_when_manual": (
+        dict(main=acct(0, left_at=NOW - 60), pro=acct(50)), dict(ignore_cooldown=True), "main", "best"),
+    "ignore_cooldown_keeps_other_rules": (
+        dict(main=acct(95, left_at=NOW - 60), pro=acct(50)), dict(ignore_cooldown=True), "pro", "best"),
 }
 
 
@@ -73,3 +77,9 @@ def test_should_leave_projected_uses_median_of_positive_deltas():
     assert should_leave(sess, acct(95), p, NOW) == "soft"
     assert should_leave({"model": "claude-opus-5-5"}, acct(10, limited={"model": "opus", "until": NOW + 5}),
                         Pool(), NOW) == "model"
+
+
+def test_none_eligible_names_why_each_account_was_skipped():
+    d = run(dict(main=acct(0, left_at=NOW - 60), pro=acct(0)), current="pro", forced=True)
+    assert d.account is None
+    assert d.skipped == {"main": f"cooldown:{NOW - 60 + 300}", "pro": "current"}

@@ -23,12 +23,12 @@ if n == 1:
     os.makedirs(os.path.join(home, "handoff"), exist_ok=True)
     with open(os.path.join(home, "handoff", os.environ["CPOOL_RUN"] + ".json"), "w") as f:
         json.dump({{"version": 1, "run": os.environ["CPOOL_RUN"], "session_id": "s1", "from": "a",
-                   "model": "claude-sonnet-5", "reason": "soft", "compacted": True,
+                   "model": "claude-sonnet-5", "reason": os.environ.get("FAKE_REASON", "soft"), "compacted": True,
                    "ts": int(time.time())}}, f)
 """
 
 
-def _setup(tmp_path, monkeypatch, sessions=None):
+def _setup(tmp_path, monkeypatch, sessions=None, left_at_b=None):
     home = tmp_path / "home"
     home.mkdir()
     bindir = tmp_path / "bin"
@@ -43,10 +43,12 @@ def _setup(tmp_path, monkeypatch, sessions=None):
         f'[[account]]\nname = "a"\ndir = "{tmp_path / "a"}"\norder = 1\n'
         f'[[account]]\nname = "b"\ndir = "{tmp_path / "b"}"\norder = 2\n')
     now = int(time.time())
+    b_extra = {"left_at": now - 30} if left_at_b else {}
     win = lambda u: {"used": u, "resets_at": now + 3600}  # noqa: E731
     (home / "state.json").write_text(json.dumps({"version": 1, "sessions": sessions or {}, "accounts": {
         "a": {"five_hour": win(5), "seven_day": win(5), "credits_enabled": False, "updated_at": now},
-        "b": {"five_hour": win(20), "seven_day": win(5), "credits_enabled": False, "updated_at": now},
+        "b": {"five_hour": win(20), "seven_day": win(5), "credits_enabled": False, "updated_at": now,
+              **b_extra},
     }}))
     monkeypatch.setenv("CPOOL_HOME", str(home))
     monkeypatch.setenv("CPOOL_PLUGIN_DIR", str(tmp_path / "plugin"))
@@ -123,3 +125,22 @@ def test_statusline_falls_back_to_account_settings(tmp_path, monkeypatch):
 ])
 def test_relaunch_args(args, expected):
     assert run.relaunch_args(args) == expected
+
+
+def test_manual_handoff_ignores_cooldown(tmp_path, monkeypatch, capsys):
+    home = _setup(tmp_path, monkeypatch, left_at_b=True)
+    monkeypatch.setenv("FAKE_REASON", "manual")
+
+    assert run.main(["--", "hi"]) == 0
+
+    assert [c["cfg"] for c in _calls(home)] == [str(tmp_path / "a"), str(tmp_path / "b")]
+
+
+def test_automatic_handoff_respects_cooldown_and_says_why(tmp_path, monkeypatch, capsys):
+    home = _setup(tmp_path, monkeypatch, left_at_b=True)
+
+    assert run.main(["--", "hi"]) == 0
+
+    assert len(_calls(home)) == 1
+    err = capsys.readouterr().err
+    assert "b: cooldown until" in err and "a: current" in err and "earliest reset" not in err
