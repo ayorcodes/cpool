@@ -18,7 +18,11 @@ class CliError(Exception):
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="cpool", description="Pool Claude subscriptions.")
+    p = argparse.ArgumentParser(
+        prog="cpool",
+        description="Pool Claude subscriptions.",
+        epilog="cpool [claude flags] runs a session on the best account, e.g. cpool --model opus.",
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("add", help="create an account dir and log in")
@@ -250,7 +254,14 @@ def _cmd_doctor() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    run_argv = argv[1:] if argv and argv[0] == "run" else None  # claude flags pass through verbatim
+    if not argv:
+        run_argv = []
+    elif argv[0] == "run":
+        run_argv = argv[1:]
+    elif argv[0].startswith("-") and argv[0] not in ("-h", "--help"):
+        run_argv = argv  # bare cpool: claude flags pass through verbatim
+    else:
+        run_argv = None
     args = None if run_argv is not None else _parser().parse_args(argv)
     try:
         if run_argv is not None:
