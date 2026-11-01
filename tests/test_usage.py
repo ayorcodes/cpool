@@ -152,3 +152,27 @@ def test_statusline_writes_state(tmp_path, monkeypatch, capsys):
     assert s["effort"] == "high"
     assert s["cache"] == {"read": 3, "created": 1} and s["turns"][0]["u5h"] == 40.0
     assert capsys.readouterr().out.strip() == "cpool:a 5h 40% 7d 11%"
+
+
+def _leave_setup(tmp_path, monkeypatch, other):
+    now = 1_000_000
+    _setup_statusline(tmp_path, monkeypatch, now)
+    monkeypatch.setattr(router, "should_leave", lambda s, a, pool, n: "soft")
+    config.save_account(config.Account("b", tmp_path / "b", 2))
+    ok = {"five_hour": {"used": other, "resets_at": now + 9000}, "credits_enabled": False,
+          "auth": "ok", "updated_at": now - 60}
+    with state.locked() as st:
+        st["accounts"]["b"] = ok
+    _render(monkeypatch, {"session_id": "s1", "model": {"id": "claude-opus-5-5"}, "workspace": {"current_dir": "/w"},
+                          "rate_limits": {"five_hour": {"used_percentage": 90, "resets_at": now + 9000}}})
+    return state.read()["sessions"]["s1"]
+
+
+def test_statusline_no_leave_without_a_target(tmp_path, monkeypatch):
+    s = _leave_setup(tmp_path, monkeypatch, other=95)
+    assert s["leave"] is None and s["leave_blocked"].startswith("none-eligible")
+
+
+def test_statusline_leaves_when_another_account_is_free(tmp_path, monkeypatch):
+    s = _leave_setup(tmp_path, monkeypatch, other=10)
+    assert s["leave"] == "soft" and "leave_blocked" not in s

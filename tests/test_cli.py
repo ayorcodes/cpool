@@ -4,6 +4,8 @@ import json
 import os
 import time
 
+import pytest
+
 from cpool import cli
 
 
@@ -102,3 +104,33 @@ def test_main_dispatches_bare_and_flag_argv_to_run(monkeypatch):
     except SystemExit as e:
         assert e.code == 0
     assert seen == []
+
+
+def _schedule_env(tmp_path, monkeypatch, plist):
+    from cpool import accounts, launchd
+
+    home = tmp_path / "home"
+    (home / "Library" / "LaunchAgents").mkdir(parents=True)
+    if plist:
+        (home / "Library" / "LaunchAgents" / f"{launchd.WARM}.plist").write_text("")
+    monkeypatch.setattr(cli.Path, "home", lambda: home)
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    (tmp_path / "config.toml").write_text('[[account]]\nname = "main"\ndir = "default"\norder = 1\n')
+    installed = []
+    monkeypatch.setattr(launchd, "install", lambda cfg, binary: installed.append(binary))
+    monkeypatch.setattr(launchd, "pmset_apply", lambda cfg: "sudo pmset repeat wakeorpoweron X")
+    fake = lambda *a, **k: type("A", (), {"name": "x"})()  # noqa: E731
+    monkeypatch.setattr(accounts, "add", fake)
+    monkeypatch.setattr(accounts, "adopt", fake)
+    monkeypatch.setattr(accounts, "remove", lambda name: None)
+    return installed
+
+
+@pytest.mark.parametrize("argv", [["add", "x"], ["adopt", "/d", "--name", "x"], ["remove", "x"]])
+@pytest.mark.parametrize("plist", [True, False])
+def test_account_changes_refresh_installed_schedule(tmp_path, monkeypatch, capsys, argv, plist):
+    installed = _schedule_env(tmp_path, monkeypatch, plist)
+    assert cli.main(argv) == 0
+    out = capsys.readouterr().out
+    assert len(installed) == int(plist)
+    assert ("schedule updated" in out and "sudo pmset" in out) == plist

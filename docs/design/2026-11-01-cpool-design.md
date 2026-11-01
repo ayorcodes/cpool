@@ -87,13 +87,15 @@ Eligible: usage credits off; `five_hour < soft` (85); `seven_day < weekly_soft` 
 Score among eligible (higher wins):
 ```
 headroom  = 0.7*(100-u5h) + 0.25*(100-u7d)
-use_it    = +15 if five_hour resets within 90 min and u5h < 60   # spend what resets soon
+expiring  = 25 * (100-u5h)/100 * max(0, 1 - mins_to_5h_reset/120)   # spend what resets soon; 0 with no open window
+pace      = clamp(0.3 * (100*f - u7d), -15, 15), f = 1 - (7d_reset - now)/7d clamped to 0..1   # weekly pacing; 0 with no weekly reset
 affinity  = +10 if another live session in the same cwd is on this account (shared cache)
 load      = -3 per live session on the account
 stale     = -20 if usage data older than 20 min
 ```
 Capacity (S4: `main` is Max 5x, `claude2` is Pro): `headroom` is multiplied by `capacity / max_capacity_in_pool`, so 10% left on a 5x account outranks 40% left on Pro. Thresholds (`soft`, `weekly_soft`, `projected`) stay per-account percentages.
 Sticky: a session never moves unless its account crosses `soft`. Move needs the target to beat the current by `margin` (10), for hysteresis. Nothing eligible → stay, and report the earliest reset.
+Leave rule: the statusline only marks a session to leave (`leave`) when the router can name another account for it, chosen as for a forced handoff. If every other account is over its thresholds, `leave` stays unset and `leave_blocked` records why, so the session keeps running instead of exiting with nowhere to go. Manual switches skip this check.
 
 ## Staggered windows
 

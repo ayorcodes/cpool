@@ -192,12 +192,30 @@ def _cmd_plan(apply: bool) -> int:
     for s in slots:
         print(f"{s.account}: warm {s.hour:02d}:{s.minute:02d}, resets {' '.join(_resets(s))}")
     if apply:
-        launchd.install(cfg, shutil.which("cpool") or os.path.abspath(sys.argv[0]))
+        launchd.install(cfg, _cpool_bin())
         print("launchd agents installed")
-        cmd = launchd.pmset_apply(cfg)
-        if cmd:
-            print(f"run this to wake the Mac before the first warm-up:\n  {cmd}")
+        _print_pmset(cfg)
     return 0
+
+
+def _cpool_bin() -> str:
+    return shutil.which("cpool") or os.path.abspath(sys.argv[0])
+
+
+def _print_pmset(cfg: config.Config) -> None:
+    cmd = launchd.pmset_apply(cfg)
+    if cmd:
+        print(f"run this to wake the Mac before the first warm-up:\n  {cmd}")
+
+
+def _refresh_schedule() -> None:
+    """Keep the launchd warm-up schedule in step with the account list, once it is installed."""
+    if not (Path.home() / "Library" / "LaunchAgents" / f"{launchd.WARM}.plist").exists():
+        return
+    cfg = config.load()
+    launchd.install(cfg, _cpool_bin())
+    print("schedule updated")
+    _print_pmset(cfg)
 
 
 def _cmd_warm(due: bool, name: str | None) -> int:
@@ -271,12 +289,15 @@ def main(argv: list[str] | None = None) -> int:
         match args.cmd:
             case "add":
                 print(f"added {accounts.add(args.name, force=args.force).name}")
+                _refresh_schedule()
             case "adopt":
                 a = accounts.adopt(Path(args.dir).expanduser(), args.name, args.move, force=args.force)
                 print(f"adopted {a.name}")
+                _refresh_schedule()
             case "remove":
                 accounts.remove(args.name)
                 print(f"removed {args.name}")
+                _refresh_schedule()
             case "list":
                 return _cmd_list()
             case "status":

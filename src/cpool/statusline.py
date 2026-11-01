@@ -95,7 +95,17 @@ def _record(payload: dict) -> str | None:
             s["turns"] = turns[-6:]
             try:
                 from . import router
-                s["leave"] = router.should_leave(s, a, cfg.pool, now)
+                leave = router.should_leave(s, a, cfg.pool, now)
+                s.pop("leave_blocked", None)
+                if leave and leave != "manual":
+                    others = {k: v for k, v in st["sessions"].items() if k != sid}
+                    d = router.choose(
+                        {**st, "sessions": others}, cfg, model=model or "", cwd=cwd or "", now=now,
+                        current=acct.name, exclude=frozenset({acct.name}), forced=True)
+                    if d.account is None:
+                        s["leave_blocked"] = d.reason
+                        leave = None
+                s["leave"] = leave
             except (ImportError, NotImplementedError):
                 s.pop("leave", None)
     return acct.name

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from cpool.config import Account, Config, Pool
-from cpool.router import choose, should_leave
+from cpool.router import choose, score, should_leave
 
 NOW = 1_000_000
 FAR = NOW + 4 * 3600
@@ -83,3 +83,18 @@ def test_none_eligible_names_why_each_account_was_skipped():
     d = run(dict(main=acct(0, left_at=NOW - 60), pro=acct(0)), current="pro", forced=True)
     assert d.account is None
     assert d.skipped == {"main": f"cooldown:{NOW - 60 + 300}", "pro": "current"}
+
+
+def test_weekly_pacing_prefers_account_behind_its_pace():
+    # equal 5h headroom and weekly use; main's week ends in 1 day (behind pace), pro's in 6 days (ahead)
+    d = run(dict(main=acct(30, 40, seven_day={"used": 40, "resets_at": NOW + 86400}),
+                 pro=acct(30, 40, seven_day={"used": 40, "resets_at": NOW + 86400 * 6})))
+    assert d.account == "main"
+    assert d.scores["main"] - d.scores["pro"] == pytest.approx(0.3 * (100 * (6 / 7) - 40) - 0.3 * (100 * (1 / 7) - 40))
+
+
+@pytest.mark.parametrize("mins,bonus", [(0, 25), (60, 12.5), (120, 0), (240, 0)])
+def test_expiring_window_bonus_fades_to_zero_at_two_hours(mins, bonus):
+    a = acct(0, 0, five_hour={"used": 0, "resets_at": NOW + max(mins * 60, 1)}, seven_day=None)
+    s = score("main", a, {}, cwd="/w", now=NOW, pool=Pool(), model="claude-opus-5-5")
+    assert s == pytest.approx(95 + bonus, abs=0.1)
