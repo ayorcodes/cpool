@@ -1,0 +1,6 @@
+{
+  "name": "cpool",
+  "version": "1.0.0",
+  "description": "cpool: compacts and exits a session at a turn boundary when the pool wants it on another account, leaving a handoff file for the wrapper",
+  "types": "./types/index.d.ts"
+}
