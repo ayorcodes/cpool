@@ -1,7 +1,7 @@
 """Account routing. Pure: no I/O."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from statistics import median
 
 from .config import Config, Pool
@@ -15,6 +15,7 @@ class Decision:
     scores: dict[str, float]
     reason: str
     earliest_reset: int | None
+    skipped: dict[str, str] = field(default_factory=dict)
 
 
 def win(acct: dict, key: str, now: int) -> tuple[float, int | None]:
@@ -61,6 +62,35 @@ def _model_limited(acct: dict, fam: str | None, now: int) -> bool:
     return m == "all" or (fam is not None and m == fam)
 
 
+def why_ineligible(
+    acct: dict,
+    *,
+    now: int,
+    pool: Pool,
+    model: str | None = None,
+    ignore_cooldown: bool = False,
+) -> str | None:
+    """Why an account can't take a session: credits, auth, no-data, limit, model, or
+    "cooldown:<epoch the cooldown ends>"; None = eligible."""
+    if acct.get("credits_enabled") is not False:
+        return "credits"
+    if acct.get("auth") not in (None, "ok"):
+        return "auth"
+    if not acct.get("updated_at"):
+        return "no-data"
+    u5h, _ = win(acct, "five_hour", now)
+    u7d, _ = win(acct, "seven_day", now)
+    if u5h >= pool.soft or u7d >= pool.weekly_soft:
+        return "limit"
+    fam = family(model)
+    if _model_used(acct, fam, now) >= pool.weekly_soft or _model_limited(acct, fam, now):
+        return "limit"
+    left_at = acct.get("left_at")
+    if not ignore_cooldown and left_at is not None and now - left_at < pool.cooldown_min * 60:
+        return f"cooldown:{left_at + pool.cooldown_min * 60}"
+    return None
+
+
 def score(
     name: str,
     acct: dict,
@@ -71,25 +101,14 @@ def score(
     pool: Pool,
     model: str | None = None,
     cap_ratio: float = 1.0,
+    ignore_cooldown: bool = False,
 ) -> float | None:
     """None = ineligible. cap_ratio is capacity / max capacity in the pool."""
-    if acct.get("credits_enabled") is not False:
+    if why_ineligible(acct, now=now, pool=pool, model=model, ignore_cooldown=ignore_cooldown):
         return None
-    if acct.get("auth") not in (None, "ok"):
-        return None
-    updated_at = acct.get("updated_at")
-    if not updated_at:
-        return None
+    updated_at = acct["updated_at"]
     u5h, reset5 = win(acct, "five_hour", now)
     u7d, _ = win(acct, "seven_day", now)
-    if u5h >= pool.soft or u7d >= pool.weekly_soft:
-        return None
-    fam = family(model)
-    if _model_used(acct, fam, now) >= pool.weekly_soft or _model_limited(acct, fam, now):
-        return None
-    left_at = acct.get("left_at")
-    if left_at is not None and now - left_at < pool.cooldown_min * 60:
-        return None
 
     s = (0.7 * (100 - u5h) + 0.25 * (100 - u7d)) * cap_ratio
     if reset5 is not None and reset5 - now <= 90 * 60 and u5h < 60:
@@ -121,6 +140,7 @@ def choose(
     current: str | None = None,
     exclude: frozenset[str] = frozenset(),
     forced: bool = False,
+    ignore_cooldown: bool = False,
 ) -> Decision:
     enabled = [a for a in cfg.accounts if a.enabled]
     state_accts = state.get("accounts") or {}
@@ -130,29 +150,36 @@ def choose(
     max_cap = max(caps.values(), default=1.0)
 
     scores: dict[str, float] = {}
+    skipped: dict[str, str] = {}
     for a in enabled:
         if a.name in excluded:
+            skipped[a.name] = "current" if a.name == current else "excluded"
             continue
         s = score(
             a.name, state_accts.get(a.name) or {}, sessions,
             cwd=cwd, now=now, pool=cfg.pool, model=model, cap_ratio=caps[a.name] / max_cap,
+            ignore_cooldown=ignore_cooldown,
         )
         if s is not None:
             scores[a.name] = s
+        else:
+            skipped[a.name] = why_ineligible(
+                state_accts.get(a.name) or {}, now=now, pool=cfg.pool, model=model,
+                ignore_cooldown=ignore_cooldown) or "ineligible"
 
     if not scores:
         names = [a.name for a in enabled if a.name not in excluded]
         reason = "none-eligible: " + (", ".join(names) if names else "no accounts")
-        return Decision(None, {}, reason, _earliest_reset(state_accts, names, now))
+        return Decision(None, {}, reason, _earliest_reset(state_accts, names, now), skipped)
 
     best = max(scores, key=lambda n: scores[n])
     if current in scores and not forced:
         if best == current:
-            return Decision(current, scores, "best", None)
+            return Decision(current, scores, "best", None, skipped)
         if scores[best] - scores[current] >= cfg.pool.margin:
-            return Decision(best, scores, "margin", None)
-        return Decision(current, scores, "sticky", None)
-    return Decision(best, scores, "best", None)
+            return Decision(best, scores, "margin", None, skipped)
+        return Decision(current, scores, "sticky", None, skipped)
+    return Decision(best, scores, "best", None, skipped)
 
 
 def should_leave(sess: dict, acct: dict, pool: Pool, now: int) -> str | None:

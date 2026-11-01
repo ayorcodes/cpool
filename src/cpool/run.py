@@ -169,6 +169,12 @@ def _hhmm(ts: int | None) -> str:
     return datetime.fromtimestamp(ts).strftime("%H:%M") if ts else "unknown"
 
 
+def _skip_text(reason: str) -> str:
+    if reason.startswith("cooldown:"):
+        return f"cooldown until {_hhmm(int(reason.split(':', 1)[1]))}"
+    return {"limit": "at limit"}.get(reason, reason)
+
+
 def _route(cfg, *, pinned: str | None, model: str | None, now: int, **kw) -> tuple[str, str, dict] | None:
     """(account, reason, scores) for the first launch, or None (message already printed)."""
     enabled = {a.name: a for a in cfg.accounts if a.enabled}
@@ -323,10 +329,14 @@ def main(argv: list[str]) -> int:
                                      if k != h["session_id"]}}
             model = h.get("model") or model
             d = router.choose(st, cfg, model=model or "", cwd=os.getcwd(), now=now,
-                              current=src, exclude=frozenset({src, acct_name}), forced=True)
+                              current=src, exclude=frozenset({src, acct_name}), forced=True,
+                              ignore_cooldown=h.get("reason") == "manual")
             if d.account is None:
-                _stderr(f"cpool: no account to move to; earliest reset {_hhmm(d.earliest_reset)} "
-                        f"(resume manually: claude --resume {h['session_id']})")
+                why = ", ".join(f"{n}: {_skip_text(r)}" for n, r in d.skipped.items())
+                reset = (f"; earliest reset {_hhmm(d.earliest_reset)}"
+                         if any(r == "limit" for r in d.skipped.values()) else "")
+                _stderr(f"cpool: no account to move to ({why}){reset}; "
+                        f"resume manually: claude --resume {h['session_id']}")
                 return code
             wait = random.uniform(*cfg.pool.jitter_s)
             _stderr(f"cpool: moving session to {d.account} in {wait:.0f}s ({h.get('reason')})")
