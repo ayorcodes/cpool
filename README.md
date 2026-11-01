@@ -89,8 +89,10 @@ cpool plan --apply   # install the launchd jobs
 ## Use
 
 ```sh
-cpool run                         # instead of claude
-cpool run -- --model opus         # any claude flags go after --
+cpool                             # instead of claude
+cpool --model opus                # claude flags go straight through
+cpool --resume <id>               # resume a session on the best account
+cpool run "prompt"                # a positional prompt needs run, since a bare first word is read as a subcommand
 cpool run --account claude2 --    # pin an account
 cpool status                      # usage per account and the next pick
 cpool switch                      # move the current session at the end of its turn

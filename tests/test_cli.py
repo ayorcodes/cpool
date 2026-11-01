@@ -82,3 +82,23 @@ def test_switch_and_status_ignore_dead_sessions(tmp_path, monkeypatch, capsys):
     sessions = json.loads((tmp_path / "state.json").read_text())["sessions"]
     assert sessions["live"]["leave_manual"] is True
     assert "dead" not in sessions
+
+
+def test_main_dispatches_bare_and_flag_argv_to_run(monkeypatch):
+    from cpool import run
+
+    seen = []
+    monkeypatch.setattr(run, "main", lambda argv: seen.append(argv) or 0)
+
+    for argv in ([], ["--model", "opus"], ["--resume", "x"]):
+        assert cli.main(argv) == 0
+    assert seen == [[], ["--model", "opus"], ["--resume", "x"]]
+
+    seen.clear()
+    monkeypatch.setattr(cli, "_cmd_status", lambda as_json: 0)
+    assert cli.main(["status", "--json"]) == 0
+    try:
+        cli.main(["-h"])
+    except SystemExit as e:
+        assert e.code == 0
+    assert seen == []
