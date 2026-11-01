@@ -24,11 +24,13 @@ cpool keeps usage per account in `~/.cpool/state.json` from two sources:
 - the weekly limit for the model you asked for is reached
 - usage credits are turned on for it
 
-Headroom is weighted by plan size, so 30% left on a Max 5x account beats 60% left on a Pro account. A window that resets within 90 minutes gets a bonus so its usage gets spent before it disappears. A session stays where it is unless another account is clearly better.
+Headroom is weighted by plan size, so 30% left on a Max 5x account beats 60% left on a Pro account. An unused 5-hour window that is about to reset gets a bonus of up to 25 points, fading to nothing when the reset is two hours away, so usage gets spent before it disappears. The weekly window adds a pacing term of up to 15 points either way: an account behind its weekly pace is favoured, one ahead of it is held back. A session stays where it is unless another account is clearly better.
 
 ### Moving a session
 
 At the end of each turn the statusline checks whether the session should leave its account: 5-hour usage at the threshold, the next turn likely to cross 97%, or the model's weekly limit reached. If so, a small Claude Code plugin compacts the session on the current account (its cache is still warm, so this is cheap), writes a handoff file and exits. `cpool run` sees the file, picks the next account and runs `claude --resume` with the same session and model. The new account starts with the compacted summary, so the first turn there reads very little uncached context.
+
+A session only leaves when another account can take it. If every other account is over its limits, the session stays put and the statusline records why in `leave_blocked`.
 
 `cpool switch` asks the current session to move at the end of its next turn.
 
