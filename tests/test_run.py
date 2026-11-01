@@ -23,7 +23,7 @@ if n == 1:
     os.makedirs(os.path.join(home, "handoff"), exist_ok=True)
     with open(os.path.join(home, "handoff", os.environ["CPOOL_RUN"] + ".json"), "w") as f:
         json.dump({{"version": 1, "run": os.environ["CPOOL_RUN"], "session_id": "s1", "from": "a",
-                   "model": "claude-sonnet-5", "reason": os.environ.get("FAKE_REASON", "soft"), "compacted": True,
+                   "model": "claude-sonnet-5", "effort": "xhigh", "reason": os.environ.get("FAKE_REASON", "soft"), "compacted": True,
                    "ts": int(time.time())}}, f)
 """
 
@@ -71,6 +71,9 @@ def test_handoff_loop_relaunches_on_other_account(tmp_path, monkeypatch):
     assert first["cfg"] == str(tmp_path / "a") and second["cfg"] == str(tmp_path / "b")
     assert first["run"] == second["run"]
     assert second["argv"].count("--resume") == 1
+    assert "--effort" not in first["argv"]
+    assert second["argv"].count("--effort") == 1
+    assert second["argv"][second["argv"].index("--effort") + 1] == "xhigh"
     assert second["argv"][second["argv"].index("--resume") + 1] == "s1"
     assert "original prompt" in first["argv"] and "original prompt" not in second["argv"]
     assert second["argv"].count("--plugin-dir") == 1 and second["argv"].count("--settings") == 1

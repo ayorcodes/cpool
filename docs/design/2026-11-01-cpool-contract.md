@@ -87,7 +87,7 @@ Written only under `state.locked()` (fcntl.flock on `state.json.lock`, write tem
   "sessions": {
     "<session_id>": {
       "account": "main", "run": "<CPOOL_RUN|null>", "pid": 4242, "cwd": "/abs",
-      "model": "claude-opus-5-5", "started_at": 1762000000, "updated_at": 1762000100,
+      "model": "claude-opus-5-5", "effort": "high", "started_at": 1762000000, "updated_at": 1762000100,
       "ctx_used": 18.0,
       "turns": [{"ts": 1762000100, "u5h": 41.0}],     // last 6 kept; est_next_turn = median of deltas
       "cache": {"read": 0, "created": 0}              // from prompt_cache, last turn
@@ -103,7 +103,7 @@ A window whose `resets_at` has passed reads as `{"used": 0, "resets_at": null}`.
 
 Written by the mod (W5), consumed (read + delete) by `run` (W6).
 ```json
-{"version": 1, "run": "<uuid>", "session_id": "<id>", "from": "main", "model": "claude-opus-5-5",
+{"version": 1, "run": "<uuid>", "session_id": "<id>", "from": "main", "model": "claude-opus-5-5", "effort": "high",
  "reason": "soft|projected|hard|model", "compacted": true, "ts": 1762000200}
 ```
 No file on child exit → `run` exits with the child's code, except the hard-limit path (W6 detects via `state.accounts[from].limited` set by the statusline/banner, then synthesizes `reason: "hard", compacted: false`).
@@ -175,4 +175,5 @@ W1 accounts+mirror · W2 router (+tests) · W3 statusline+usage · W4 schedule+w
 - `pmset` needs sudo: cpool prints the command, never runs it.
 - Manual switch: `cpool switch` sets `sessions.<sid>.leave_manual = true`; the mod treats it as reason "manual"; the statusline clears it only when the session shows up on a different account.
 - Known limit: the mod acts only at `turn.complete` (main loop; subagent and engine-fork turns, i.e. `agentId` set, are ignored). A handoff whose file write failed retries on the next turn, so an idle headless session stalls until prompted.
+- Reasoning effort travels like the model: the statusline stores `sessions.<sid>.effort` (`effort.level`, left unchanged when absent), the mod writes it into the handoff (`null` if unknown), and `cpool run` pops `--effort` and relaunches with `--effort <handoff effort>`.
 - `cpool run` passes the router a state copy without the session's own record, so a session doesn't bias its current account (+10 affinity, −3 load).

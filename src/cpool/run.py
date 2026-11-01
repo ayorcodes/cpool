@@ -104,8 +104,8 @@ def _pop_flag(args: list[str], name: str) -> tuple[str | None, list[str]]:
     return val, rest
 
 
-def _parse(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
-    model = account = None
+def _parse(argv: list[str]) -> tuple[str | None, str | None, str | None, list[str]]:
+    model = account = effort = None
     rest: list[str] = []
     i = 0
     while i < len(argv):
@@ -113,16 +113,18 @@ def _parse(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
         if a == "--":
             rest.extend(argv[i + 1:])
             break
-        if a in ("--model", "--account") and i + 1 < len(argv):
+        if a in ("--model", "--effort", "--account") and i + 1 < len(argv):
             if a == "--model":
                 model = argv[i + 1]
+            elif a == "--effort":
+                effort = argv[i + 1]
             else:
                 account = argv[i + 1]
             i += 2
         else:
             rest.append(a)
             i += 1
-    return model, account, rest
+    return model, effort, account, rest
 
 
 def _plugin_dir() -> str:
@@ -245,11 +247,11 @@ def _hard_handoff(run_id: str, model: str | None, now: int) -> dict | None:
     if ans.strip().lower() not in ("", "y", "yes"):
         return None
     return {"session_id": sid, "from": name, "model": sess.get("model") or model or "",
-            "reason": "hard", "compacted": False}
+            "effort": sess.get("effort"), "reason": "hard", "compacted": False}
 
 
 def main(argv: list[str]) -> int:
-    cpool_model, pinned, args = _parse(argv)
+    cpool_model, cpool_effort, pinned, args = _parse(argv)
     _warned_missing.clear()
     cfg = config.load()
     if not any(a.enabled for a in cfg.accounts):
@@ -258,6 +260,8 @@ def main(argv: list[str]) -> int:
 
     user_model, args = _pop_flag(args, "--model")
     model = user_model or cpool_model
+    user_effort, args = _pop_flag(args, "--effort")
+    effort = user_effort or cpool_effort
     user_settings, args = _pop_flag(args, "--settings")
     print_mode = _is_print(args)
 
@@ -302,6 +306,8 @@ def main(argv: list[str]) -> int:
             cmd = ["claude", *args]
             if model:
                 cmd += ["--model", model]
+            if effort:
+                cmd += ["--effort", effort]
             cmd += ["--plugin-dir", plugin, "--settings", str(settings_file)]
             code = _spawn(cmd, env)
 
@@ -328,6 +334,7 @@ def main(argv: list[str]) -> int:
             st = {**st, "sessions": {k: v for k, v in (st.get("sessions") or {}).items()
                                      if k != h["session_id"]}}
             model = h.get("model") or model
+            effort = h.get("effort") or effort
             d = router.choose(st, cfg, model=model or "", cwd=os.getcwd(), now=now,
                               current=src, exclude=frozenset({src, acct_name}), forced=True,
                               ignore_cooldown=h.get("reason") == "manual")

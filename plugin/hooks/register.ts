@@ -12,7 +12,7 @@ const LEAVING = { plugin: 'cpool', key: 'leaving' } as const
 const COMPACTED = { plugin: 'cpool', key: 'compacted' } as const // 'yes' | 'no' once this process has compacted
 const DEFER_MS = 500 // compact rejects mid-turn; let the turn settle first
 
-type Session = { leave?: unknown; leave_manual?: unknown; model?: unknown }
+type Session = { leave?: unknown; leave_manual?: unknown; model?: unknown; effort?: unknown }
 
 async function homeOf($: EngineInterface): Promise<string> {
   const home = await $.env.get('CPOOL_HOME')
@@ -57,6 +57,7 @@ async function handoff($: EngineInterface, home: string, run: string, sid: strin
       session_id: sid,
       from: (await $.env.get('CPOOL_ACCOUNT')) ?? null,
       model: typeof sess.model === 'string' ? sess.model : null,
+      effort: typeof sess.effort === 'string' ? sess.effort : null,
       reason: sess.leave,
       compacted,
       ts: Math.floor((await $.clock.now()) / 1000),

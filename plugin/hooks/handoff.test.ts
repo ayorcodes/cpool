@@ -42,7 +42,7 @@ function world(on: On, env: Record<string, string>, opts: { skip?: boolean; comp
 }
 
 const leaving = (leave?: string, manual = false) => ({
-  sessions: { 'sess-1': { account: 'main', model: 'claude-opus-5-5', ...(leave ? { leave } : {}), ...(manual ? { leave_manual: true } : {}) } },
+  sessions: { 'sess-1': { account: 'main', model: 'claude-opus-5-5', effort: 'high', ...(leave ? { leave } : {}), ...(manual ? { leave_manual: true } : {}) } },
 })
 const ENV = { CPOOL_RUN: RUN, CPOOL_HOME: HOME, CPOOL_ACCOUNT: 'main' }
 const DONE = { turnId: 't1', answer: '', durationMs: 1, isAborted: false }
@@ -75,7 +75,7 @@ test('on leave: compacts, writes the handoff file the wrapper reads, exits, once
   const w = world(on, ENV, { state: leaving('soft') })
   await finishTurn($, clock)
   expect(JSON.parse(w.files.get(FILE) ?? '{}')).toEqual({
-    version: 1, run: RUN, session_id: 'sess-1', from: 'main', model: 'claude-opus-5-5',
+    version: 1, run: RUN, session_id: 'sess-1', from: 'main', model: 'claude-opus-5-5', effort: 'high',
     reason: 'soft', compacted: true, ts: 1_762_000_200,
   })
   expect(w.compacts).toBe(1)
