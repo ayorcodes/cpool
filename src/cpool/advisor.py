@@ -7,8 +7,10 @@ import json
 import os
 import re
 import secrets
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from importlib import resources
@@ -383,6 +385,7 @@ def settings_target() -> Path:
 
 def _allow_list(path: Path) -> tuple[dict | None, list | None, str | None]:
     """(settings, allow list, why not): the list is None when the file can't be edited safely."""
+    path = Path(os.path.realpath(path))
     if not path.exists():
         return {}, None, None
     try:
@@ -401,10 +404,27 @@ def _allow_list(path: Path) -> tuple[dict | None, list | None, str | None]:
 
 
 def _write_settings(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
-    os.replace(tmp, path)
+    """Replace the file `path` resolves to (a symlink stays a symlink), keeping its mode."""
+    target = Path(os.path.realpath(path))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+    except FileNotFoundError:
+        mode = 0o600
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".settings.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            os.fchmod(f.fileno(), mode)
+            f.write(json.dumps(data, indent=2) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def add_allow_rule() -> str:

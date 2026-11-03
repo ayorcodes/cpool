@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import subprocess
 import time
 from datetime import datetime
@@ -295,3 +297,24 @@ def test_shared_settings_take_precedence(env, home):
     assert cli.main(["advise", "setup"]) == 0
     assert advisor.ALLOW_RULE in json.loads(shared.read_text())["permissions"]["allow"]
     assert home.read_text() == "{}"
+
+
+def test_setup_writes_through_a_symlinked_settings_file(env, home):
+    target = env.tmp / "dotfiles" / "settings.json"
+    target.parent.mkdir()
+    target.write_text(json.dumps({"model": "opus", "env": {"A": "1"}}))
+    home.symlink_to(target)
+    assert cli.main(["advise", "setup"]) == 0
+    assert home.is_symlink() and home.resolve() == target.resolve()
+    data = json.loads(target.read_text())
+    assert advisor.ALLOW_RULE in data["permissions"]["allow"]
+    assert data["model"] == "opus" and data["env"] == {"A": "1"}
+
+
+def test_setup_keeps_settings_file_mode(env, home):
+    home.write_text(json.dumps({"env": {"SECRET": "x"}}))
+    os.chmod(home, 0o600)
+    assert cli.main(["advise", "setup"]) == 0
+    assert advisor.ALLOW_RULE in json.loads(home.read_text())["permissions"]["allow"]
+    assert stat.S_IMODE(home.stat().st_mode) == 0o600
+    assert not list(home.parent.glob(".settings.*"))
