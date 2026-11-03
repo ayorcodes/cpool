@@ -77,8 +77,9 @@ def _parser() -> argparse.ArgumentParser:
     a.add_argument("--check", action="store_true", help="with status: check the key reaches the model")
     a = adv.add_parser("usage", help="spend this credit cycle")
     a.add_argument("--json", action="store_true")
-    a = adv.add_parser("setup", help="store the key and install the fable skill")
+    a = adv.add_parser("setup", help="store the key, install the fable skill and allow the command")
     a.add_argument("--force", action="store_true")
+    a.add_argument("--remove", action="store_true", help="undo the skill and allow rule (the key stays)")
     return p
 
 
@@ -318,14 +319,16 @@ def _cmd_advise(args) -> int:
                 for k, v in info.items():
                     print(f"{k}: {v}")
         case "setup":
+            if args.remove:
+                print(f"skill: {advisor.remove_skill(args.force)}")
+                print(f"allow rule: {advisor.remove_allow_rule()}")
+                return 0
             if advisor.get_key() is None:
                 advisor.prompt_key()
             if _advise_key("status", True, adv):
                 return 2
             print(f"skill installed: {advisor.install_skill(args.force)}")
-            print("Add these yourself:")
-            print("  permissions allowlist: Bash(cpool advise:*)")
-            print('  CLAUDE.md: When I say "ask Fable", use the fable skill.')
+            print(f"allow rule: {advisor.add_allow_rule()}")
     return 0
 
 

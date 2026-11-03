@@ -357,6 +357,80 @@ def install_skill(force: bool = False) -> Path:
     return dst
 
 
+def remove_skill(force: bool = False) -> str:
+    dst = skill_target()
+    if not dst.exists():
+        return "already"
+    if dst.read_bytes() != skill_text().encode() and not force:
+        return "skipped: modified"
+    dst.unlink()
+    try:
+        dst.parent.rmdir()
+    except OSError:
+        pass  # other files live there; leave them
+    return "done"
+
+
+# ---- settings -------------------------------------------------------------
+
+ALLOW_RULE = "Bash(cpool advise:*)"
+
+
+def settings_target() -> Path:
+    shared = paths.shared_dir() / "settings.json"
+    return shared if shared.exists() else Path.home() / ".claude" / "settings.json"
+
+
+def _allow_list(path: Path) -> tuple[dict | None, list | None, str | None]:
+    """(settings, allow list, why not): the list is None when the file can't be edited safely."""
+    if not path.exists():
+        return {}, None, None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        return None, None, f"{path} is not valid JSON ({e})"
+    if not isinstance(data, dict):
+        return None, None, f"{path} is not a JSON object"
+    perms = data.get("permissions", {})
+    if not isinstance(perms, dict):
+        return None, None, f"permissions in {path} is not an object"
+    allow = perms.get("allow", [])
+    if not isinstance(allow, list):
+        return None, None, f"permissions.allow in {path} is not a list"
+    return data, allow, None
+
+
+def _write_settings(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    os.replace(tmp, path)
+
+
+def add_allow_rule() -> str:
+    path = settings_target()
+    data, allow, why = _allow_list(path)
+    if why:
+        return f"skipped: {why}"
+    if allow is not None and ALLOW_RULE in allow:
+        return "already"
+    data.setdefault("permissions", {}).setdefault("allow", []).append(ALLOW_RULE)
+    _write_settings(path, data)
+    return "done"
+
+
+def remove_allow_rule() -> str:
+    path = settings_target()
+    data, allow, why = _allow_list(path)
+    if why:
+        return f"skipped: {why}"
+    if allow is None or ALLOW_RULE not in allow:
+        return "already"
+    data["permissions"]["allow"] = [r for r in allow if r != ALLOW_RULE]
+    _write_settings(path, data)
+    return "done"
+
+
 def check_key(model: str) -> str | None:
     """None when the key reaches `model`, else the error."""
     try:

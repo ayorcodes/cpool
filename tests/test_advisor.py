@@ -237,3 +237,61 @@ def test_advisor_config(tmp_path):
         config.load(p)
     p.write_text("")
     assert config.load(p).advisor == config.Advisor()
+
+
+# Setup must not corrupt the user's settings.
+@pytest.fixture
+def home(env, monkeypatch):
+    h = env.tmp / "home"
+    (h / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(h))
+    monkeypatch.setattr(advisor, "check_key", lambda model: None)
+    return h / ".claude" / "settings.json"
+
+
+def test_setup_adds_rule_and_preserves_settings(env, home, capsys):
+    text = json.dumps({"model": "opus", "permissions": {"deny": ["x"], "allow": ["Read", "Bash(ls:*)"]}, "env": {"A": "1"}})
+    home.write_text(text)
+    assert cli.main(["advise", "setup"]) == 0
+    data = json.loads(home.read_text())
+    assert list(data) == ["model", "permissions", "env"]
+    assert list(data["permissions"]) == ["deny", "allow"]
+    assert data["permissions"]["allow"] == ["Read", "Bash(ls:*)", advisor.ALLOW_RULE]
+    assert home.read_text().endswith("}\n")
+    before = home.read_text()
+    assert cli.main(["advise", "setup"]) == 0
+    assert home.read_text() == before
+    assert "allow rule: already" in capsys.readouterr().out
+
+
+def test_setup_skips_invalid_settings(env, home, capsys):
+    home.write_text("{not json")
+    assert cli.main(["advise", "setup"]) == 0
+    assert home.read_text() == "{not json"
+    assert "allow rule: skipped" in capsys.readouterr().out
+    home.write_text('{"permissions": {"allow": "Read"}}')
+    assert cli.main(["advise", "setup"]) == 0
+    assert home.read_text() == '{"permissions": {"allow": "Read"}}'
+
+
+def test_remove_deletes_only_our_rule(env, home, capsys):
+    home.write_text(json.dumps({"permissions": {"allow": ["Read", advisor.ALLOW_RULE, "Bash(cpool advise:ask)"]}}))
+    assert cli.main(["advise", "setup"]) == 0
+    skill = advisor.skill_target()
+    assert skill.exists()
+    skill.write_text("edited")
+    assert cli.main(["advise", "setup", "--remove"]) == 0
+    assert skill.exists() and "skill: skipped: modified" in capsys.readouterr().out
+    assert json.loads(home.read_text())["permissions"]["allow"] == ["Read", "Bash(cpool advise:ask)"]
+    assert cli.main(["advise", "setup", "--remove", "--force"]) == 0
+    assert not skill.exists()
+
+
+def test_shared_settings_take_precedence(env, home):
+    home.write_text("{}")
+    shared = paths.shared_dir() / "settings.json"
+    shared.parent.mkdir(parents=True)
+    shared.write_text("{}")
+    assert cli.main(["advise", "setup"]) == 0
+    assert advisor.ALLOW_RULE in json.loads(shared.read_text())["permissions"]["allow"]
+    assert home.read_text() == "{}"

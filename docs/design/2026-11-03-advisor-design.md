@@ -149,7 +149,16 @@ cpool advise setup [--force]
   1. `key set` if absent.
   2. `key status --check`.
   3. Install the skill: copy the packaged `assets/fable/SKILL.md` to `paths.shared_dir()/skills/fable/SKILL.md` when `paths.shared_dir()/skills` exists (cpool shares skills across accounts, README:11), else to `~/.claude/skills/fable/SKILL.md`. If a different file is there, refuse unless `--force`.
-  4. Print two lines for the user to add themselves, and edit neither file: `Bash(cpool advise:*)` (the permissions allowlist) and `When I say "ask Fable", use the fable skill.` (CLAUDE.md).
+  4. Add `Bash(cpool advise:*)` to `permissions.allow` in the user settings file. Amended 2026-11-03: setup must be hands-off.
+     - Target: `paths.shared_dir()/settings.json` when it exists (shared across accounts), else `~/.claude/settings.json`. Create the file if it's missing.
+     - Idempotent: if the rule is already present, change nothing.
+     - Preserve every other key and its order. Write atomically (temp file + `os.replace`), with `indent=2` and a trailing newline.
+     - If the file isn't valid JSON, or `permissions`/`allow` has the wrong type, refuse this step with a message and leave the file untouched.
+  5. Print a one-line summary per step (`done` / `already` / `skipped: <why>`).
+
+  No CLAUDE.md edit: the skill's own description triggers on "ask Fable".
+
+  `cpool advise setup --remove` undoes steps 3–4: it deletes the skill dir only if its SKILL.md matches the packaged one (else skips, unless `--force`), and removes only the exact allow rule. The Keychain key stays; `key clear` removes it.
 
 Read packaged assets with `importlib.resources`, and make sure hatchling ships `assets/` in the wheel.
 

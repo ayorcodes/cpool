@@ -137,7 +137,7 @@ order = 2
 
 `cpool advise` sends a question plus a facts file to Fable on an Anthropic API key, so it spends the API credit a Max plan includes instead of the subscription. Fable never runs tools or reads the disk; it sees only the question, the facts and any `--attach` files.
 
-Setup: `cpool advise setup` stores the key in the Keychain (service `cpool-advisor`), checks it reaches the model, and installs the `fable` skill (into `~/.cpool/shared/skills` when it exists, else `~/.claude/skills`). Then add `Bash(cpool advise:*)` to your permissions allowlist and `When I say "ask Fable", use the fable skill.` to CLAUDE.md yourself.
+Setup: `cpool advise setup` stores the key in the Keychain (service `cpool-advisor`), checks it reaches the model, and installs the `fable` skill (into `~/.cpool/shared/skills` when it exists, else `~/.claude/skills`). It also adds `Bash(cpool advise:*)` to `permissions.allow` in `~/.cpool/shared/settings.json` when that file exists, else `~/.claude/settings.json`, and leaves the file alone if it isn't valid JSON. Nothing else to do: the skill triggers on "ask Fable". `cpool advise setup --remove` undoes the skill and the allow rule (add `--force` to delete a modified skill); the Keychain key stays until `key clear`.
 
 Use:
 
