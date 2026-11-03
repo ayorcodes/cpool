@@ -24,7 +24,7 @@ cpool keeps usage per account in `~/.cpool/state.json` from two sources:
 - the weekly limit for the model you asked for is reached
 - usage credits are turned on for it
 
-Headroom is weighted by plan size, so 30% left on a Max 5x account beats 60% left on a Pro account. An unused 5-hour window that is about to reset gets a bonus of up to 25 points, fading to nothing when the reset is two hours away, so usage gets spent before it disappears. The weekly window adds a pacing term of up to 15 points either way: an account behind its weekly pace is favoured, one ahead of it is held back. A session stays where it is unless another account is clearly better.
+Headroom is weighted by plan size, so 30% left on a Max 5x account beats 60% left on a Pro account. An unused 5-hour window that is about to reset gets a bonus of up to 25 points, fading to nothing when the reset is two hours away, so usage gets spent before it disappears. The weekly window adds a pacing term of up to 15 points either way: an account behind its weekly pace is favoured, one ahead of it is held back. Inside 36 hours of its weekly reset, an account gets up to 100 points scaled by its unused weekly allowance, so allowance that would otherwise be lost gets used first. A session stays where it is unless another account is clearly better.
 
 ### Moving a session
 
@@ -116,6 +116,8 @@ start_hour = 8     # first reset of the first account
 soft = 85          # leave an account at this 5-hour %
 projected = 97     # or when the next turn would likely cross this
 weekly_soft = 90   # skip an account at this weekly %
+# expiry_h = 36        # hours before a weekly reset at which unused weekly allowance earns the bonus
+# expiry_weight = 100  # points for 100% unused weekly allowance inside that window
 margin = 10        # how much better another account must be to move
 cooldown_min = 5   # an account just left is skipped this long
 poll_min = 10

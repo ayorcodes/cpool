@@ -116,6 +116,8 @@ def score(
     if reset7 is not None:
         f = min(1.0, max(0.0, 1 - (reset7 - now) / (7 * 86400)))
         s += min(15.0, max(-15.0, 0.3 * (100 * f - u7d)))
+        if (reset7 - now) <= pool.expiry_h * 3600:
+            s += pool.expiry_weight * (100 - u7d) / 100
     mine = [x for x in sessions.values() if x.get("account") == name]
     if any(x.get("cwd") == cwd for x in mine):
         s += 10
