@@ -31,6 +31,8 @@ class Pool:
     soft: float = 85
     projected: float = 97
     weekly_soft: float = 90
+    expiry_h: float = 36
+    expiry_weight: float = 100
     margin: float = 10
     cooldown_min: int = 5
     stale_min: int = 20

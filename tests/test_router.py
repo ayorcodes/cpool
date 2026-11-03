@@ -90,7 +90,9 @@ def test_weekly_pacing_prefers_account_behind_its_pace():
     d = run(dict(main=acct(30, 40, seven_day={"used": 40, "resets_at": NOW + 86400}),
                  pro=acct(30, 40, seven_day={"used": 40, "resets_at": NOW + 86400 * 6})))
     assert d.account == "main"
-    assert d.scores["main"] - d.scores["pro"] == pytest.approx(0.3 * (100 * (6 / 7) - 40) - 0.3 * (100 * (1 / 7) - 40))
+    # main's reset is also inside the expiry window: +100 * 60% unused
+    assert d.scores["main"] - d.scores["pro"] == pytest.approx(
+        0.3 * (100 * (6 / 7) - 40) - 0.3 * (100 * (1 / 7) - 40) + 60)
 
 
 @pytest.mark.parametrize("mins,bonus", [(0, 25), (60, 12.5), (120, 0), (240, 0)])
@@ -98,3 +100,17 @@ def test_expiring_window_bonus_fades_to_zero_at_two_hours(mins, bonus):
     a = acct(0, 0, five_hour={"used": 0, "resets_at": NOW + max(mins * 60, 1)}, seven_day=None)
     s = score("main", a, {}, cwd="/w", now=NOW, pool=Pool(), model="claude-opus-5-5")
     assert s == pytest.approx(95 + bonus, abs=0.1)
+
+
+@pytest.mark.parametrize("pro_reset_h,want", [(25, "claude2"), (60, "main")])
+def test_weekly_expiry_bonus_spends_allowance_about_to_expire(pro_reset_h, want):
+    # a Pro week about to reset outweighs Max5x capacity scaling, but only inside the expiry window
+    c = Config(Pool(), (Account("main", Path("/m"), 1), Account("claude2", Path("/p"), 2)))
+    accounts = {
+        "main": acct(5, 37, five_hour={"used": 5, "resets_at": NOW + 16920},
+                     seven_day={"used": 37, "resets_at": NOW + 64 * 3600}),
+        "claude2": acct(31, 33, tier="default_claude_ai", five_hour={"used": 31, "resets_at": NOW + 9720},
+                        seven_day={"used": 33, "resets_at": NOW + pro_reset_h * 3600}),
+    }
+    d = choose({"accounts": accounts, "sessions": {}}, c, model="claude-opus-5-5", cwd="/w", now=NOW)
+    assert d.account == want
