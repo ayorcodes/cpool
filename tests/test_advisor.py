@@ -160,7 +160,10 @@ def test_real_client_ignores_env_credentials(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "envtoken")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "envkey")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://evil.example")
+    monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", "Authorization: Bearer envtok\nx-api-key: envkey")
     c = advisor._client(KEY)
+    h = {k.lower(): v for k, v in c.default_headers.items()}
+    assert h["authorization"] == f"Bearer {KEY}" and "x-api-key" not in h
     assert c.api_key == KEY and c.auth_token is None
     assert str(c.base_url).rstrip("/") == advisor.BASE_URL
 

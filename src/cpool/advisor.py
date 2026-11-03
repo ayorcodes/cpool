@@ -84,6 +84,8 @@ def _client(key: str):
     import anthropic
 
     # Explicit api_key and base_url: the SDK then reads neither ANTHROPIC_* credentials nor ANTHROPIC_BASE_URL.
+    # It still merges ANTHROPIC_CUSTOM_HEADERS after the auth header, so drop it from this process.
+    os.environ.pop("ANTHROPIC_CUSTOM_HEADERS", None)
     return anthropic.Anthropic(api_key=key, base_url=BASE_URL)
 
 
@@ -222,9 +224,12 @@ def _user_content(question: str, facts: Path, attach: list[Path], limit: int) ->
     if total > limit:
         listed = ", ".join(f"{k}={v}" for k, v in sizes.items())
         raise AdvisorError(f"facts and attachments are {total} bytes, over max_attach_bytes={limit} ({listed})")
-    parts = [f"<question>{question}</question>", f"<facts>{facts.read_text()}</facts>"]
-    for p in attach:
-        parts.append(f'<file path="{p.resolve()}">{p.read_text()}</file>')
+    try:
+        parts = [f"<question>{question}</question>", f"<facts>{facts.read_text()}</facts>"]
+        for p in attach:
+            parts.append(f'<file path="{p.resolve()}">{p.read_text()}</file>')
+    except (OSError, UnicodeDecodeError) as e:
+        raise AdvisorError(f"cannot read a facts or attach file: {e}") from None
     return "\n".join(parts)
 
 
