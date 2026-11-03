@@ -23,6 +23,7 @@ class Fake:
     def __init__(self, text="VERDICT: do it.", in_tok=1000, stop="end_turn"):
         self.text, self.in_tok, self.stop = text, in_tok, stop
         self.counted, self.streamed = [], []
+        self.fail = None  # an exception get_final_message raises, as a mid-stream failure
         self.messages = SimpleNamespace(count_tokens=self._count)
         self.beta = SimpleNamespace(messages=SimpleNamespace(stream=self._stream))
 
@@ -38,12 +39,12 @@ class Fake:
             usage=SimpleNamespace(input_tokens=1000, output_tokens=2000,
                                   cache_creation_input_tokens=500, cache_read_input_tokens=0),
         )
-        return _CM(resp)
+        return _CM(resp, self.fail)
 
 
 class _CM:
-    def __init__(self, resp):
-        self.resp = resp
+    def __init__(self, resp, fail=None):
+        self.resp, self.fail = resp, fail
 
     def __enter__(self):
         return self
@@ -52,6 +53,8 @@ class _CM:
         return False
 
     def get_final_message(self):
+        if self.fail is not None:
+            raise self.fail
         return self.resp
 
 
@@ -106,6 +109,52 @@ def test_open_reservation_counts(env):
     advisor._append({"ts": time.time(), "kind": "reserve", "id": "done", "worst": 9.0})
     advisor._append({"ts": time.time(), "kind": "final", "id": "done", "cost_usd": 1.0})
     assert advisor.cycle(adv)["spent"] == pytest.approx(8.0)
+
+
+# Money: a failure after the reservation still settles it; only a server rejection is free.
+def test_midstream_failure_settles_at_worst(env, capsys):
+    env.fake.fail = ConnectionError("connection dropped")
+    assert _ask(env) == 2
+    reserve, final = _rows()
+    assert final["kind"] == "final" and final["id"] == reserve["id"]
+    assert final["cost_usd"] == reserve["worst"] and final["estimated"] is True
+    assert final["error"] == "ConnectionError"
+    assert not (paths.advisor_dir() / "threads").exists()
+    assert "connection dropped" in capsys.readouterr().err
+
+
+def test_interrupt_settles_at_worst_and_reraises(env):
+    env.fake.fail = KeyboardInterrupt()
+    with pytest.raises(KeyboardInterrupt):
+        _ask(env)
+    reserve, final = _rows()
+    assert final["id"] == reserve["id"] and final["cost_usd"] == reserve["worst"]
+
+
+def test_server_rejection_settles_at_zero(env):
+    import anthropic
+
+    class Rejected(anthropic.APIStatusError):
+        def __init__(self):
+            Exception.__init__(self, "bad request")
+
+    env.fake.fail = Rejected()
+    assert _ask(env) == 2
+    reserve, final = _rows()
+    assert final["id"] == reserve["id"] and final["cost_usd"] == 0 and "estimated" not in final
+    assert not (paths.advisor_dir() / "threads").exists()
+
+
+# Money: a repeated attachment is inlined twice, so it counts twice against max_attach_bytes.
+def test_duplicate_attach_counts_twice(env, capsys, monkeypatch):
+    monkeypatch.setattr(config, "load", lambda *a, **k: SimpleNamespace(advisor=config.Advisor(max_attach_bytes=1500)))
+    env.facts.write_text("ab")
+    big = env.tmp / "big.txt"
+    big.write_text("x" * 1000)
+    assert _ask(env, "--attach", str(big), "--attach", str(big)) == 2
+    assert env.fake.streamed == []
+    err = capsys.readouterr().err
+    assert "2002 bytes" in err and f"{big.resolve()}=1000" in err
 
 
 # Money: the cycle boundary decides which spend counts.

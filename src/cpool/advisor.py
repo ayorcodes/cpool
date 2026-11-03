@@ -98,6 +98,15 @@ def _api_errors() -> tuple[type[BaseException], ...]:
         return ()
 
 
+def _status_errors() -> tuple[type[BaseException], ...]:
+    try:
+        import anthropic
+
+        return (anthropic.APIStatusError,)
+    except ImportError:  # pragma: no cover
+        return ()
+
+
 # ---- ledger and cycle -----------------------------------------------------
 
 def _ledger() -> Path:
@@ -217,12 +226,13 @@ def parse(text: str) -> tuple[str, list[str]]:
 
 def _user_content(question: str, facts: Path, attach: list[Path], limit: int) -> str:
     try:
-        sizes = {str(facts): facts.stat().st_size} | {str(p.resolve()): p.stat().st_size for p in attach}
+        # one entry per inlined item, duplicates included, so the total is what is sent
+        sizes = [(str(facts), facts.stat().st_size)] + [(str(p.resolve()), p.stat().st_size) for p in attach]
     except OSError as e:
         raise AdvisorError(f"cannot read {e.filename}") from None
-    total = sum(sizes.values())
+    total = sum(n for _, n in sizes)
     if total > limit:
-        listed = ", ".join(f"{k}={v}" for k, v in sizes.items())
+        listed = ", ".join(f"{k}={v}" for k, v in sizes)
         raise AdvisorError(f"facts and attachments are {total} bytes, over max_attach_bytes={limit} ({listed})")
     try:
         parts = [f"<question>{question}</question>", f"<facts>{facts.read_text()}</facts>"]
@@ -288,8 +298,18 @@ def ask(adv, question: str, facts: Path, attach: list[Path], thread: str = "new"
             fallbacks="default",
         ) as stream:
             resp = stream.get_final_message()
-    except errs as e:
-        _append({"ts": time.time(), "kind": "final", "id": rid, "cost_usd": 0, "error": type(e).__name__})
+    except BaseException as e:
+        # settle the reservation whatever happened: a server rejection generated nothing, anything
+        # else (transport drop, interrupt) may have been partly billed, so it is charged at worst
+        row = {"ts": time.time(), "kind": "final", "id": rid, "thread": t["id"], "round": rnd,
+               "error": type(e).__name__}
+        if isinstance(e, _status_errors()):
+            row["cost_usd"] = 0
+        else:
+            row.update(cost_usd=worst, estimated=True)
+        _append(row)
+        if not isinstance(e, Exception):
+            raise
         raise AdvisorError(f"{type(e).__name__}: {e}") from None
 
     usage = resp.usage
