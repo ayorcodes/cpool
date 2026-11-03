@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import accounts, config, journal, launchd, mirror, router, schedule, state, usage, warm
+from . import accounts, advisor, config, journal, launchd, mirror, router, schedule, state, usage, warm
 
 
 class CliError(Exception):
@@ -61,6 +61,24 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("statusline", help="statusline wrapper (reads stdin)")
     sub.add_parser("run", help="run claude on the best account: cpool run [claude args]")
     sub.add_parser("doctor", help="check the setup")
+
+    s = sub.add_parser("advise", help="ask the Fable advisor (API credits)")
+    adv = s.add_subparsers(dest="advise_cmd", required=True)
+    a = adv.add_parser("ask", help="ask a question with a facts file")
+    a.add_argument("question", nargs="?")
+    a.add_argument("--facts", required=True, type=Path)
+    a.add_argument("--attach", action="append", default=[], type=Path)
+    a.add_argument("--thread", default="new")
+    a.add_argument("--model")
+    a.add_argument("--effort", choices=config._EFFORTS)
+    a.add_argument("--json", action="store_true")
+    a = adv.add_parser("key", help="manage the API key in the Keychain")
+    a.add_argument("action", choices=["set", "clear", "status"])
+    a.add_argument("--check", action="store_true", help="with status: check the key reaches the model")
+    a = adv.add_parser("usage", help="spend this credit cycle")
+    a.add_argument("--json", action="store_true")
+    a = adv.add_parser("setup", help="store the key and install the fable skill")
+    a.add_argument("--force", action="store_true")
     return p
 
 
@@ -270,6 +288,65 @@ def _cmd_doctor() -> int:
     return 1 if bad else 0
 
 
+def _cmd_advise(args) -> int:
+    adv = config.load().advisor
+    match args.advise_cmd:
+        case "ask":
+            q = args.question if args.question is not None else sys.stdin.read()
+            code, r = advisor.ask(adv, q, args.facts, args.attach, args.thread, args.model, args.effort)
+            if r["truncated"]:
+                print("cpool: warning: the answer hit max_tokens and is truncated", file=sys.stderr)
+            if code == 5:
+                print(f"cpool: Fable refused: {json.dumps(r.get('stop_details'))}", file=sys.stderr)
+            if args.json:
+                print(json.dumps({k: v for k, v in r.items() if k != "stop_details"}))
+            else:
+                print(r["text"])
+                print(f"[advise] thread={r['thread']} round={r['round']}/{r['max_rounds']} model={r['model']} "
+                      f"cost=${r['cost_usd']:.4f} cycle=${r['cycle_spent_usd']:.2f}/${r['cap_usd']:.2f}")
+            return code
+        case "key":
+            return _advise_key(args.action, args.check, adv)
+        case "usage":
+            c = advisor.cycle(adv)
+            info = {"cycle_start": datetime.fromtimestamp(c["start"]).isoformat(), "spent_usd": round(c["spent"], 4),
+                    "cap_usd": c["cap"], "remaining_usd": round(max(0.0, c["cap"] - c["spent"]), 4),
+                    "calls": c["calls"], "open_reservations": c["open"]}
+            if args.json:
+                print(json.dumps(info))
+            else:
+                for k, v in info.items():
+                    print(f"{k}: {v}")
+        case "setup":
+            if advisor.get_key() is None:
+                advisor.prompt_key()
+            if _advise_key("status", True, adv):
+                return 2
+            print(f"skill installed: {advisor.install_skill(args.force)}")
+            print("Add these yourself:")
+            print("  permissions allowlist: Bash(cpool advise:*)")
+            print('  CLAUDE.md: When I say "ask Fable", use the fable skill.')
+    return 0
+
+
+def _advise_key(action: str, check: bool, adv: config.Advisor) -> int:
+    match action:
+        case "set":
+            advisor.prompt_key()
+        case "clear":
+            print("key removed" if advisor.clear_key() else "no key stored")
+        case "status":
+            present = advisor.get_key() is not None
+            print(f"key: {'present' if present else 'absent'}")
+            if check and present:
+                err = advisor.check_key(adv.model)
+                print(f"{adv.model}: {'reachable' if err is None else err}")
+                return 0 if err is None else 2
+            if check:
+                return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
@@ -322,6 +399,11 @@ def main(argv: list[str] | None = None) -> int:
                 return statusline.main()
             case "doctor":
                 return _cmd_doctor()
+            case "advise":
+                return _cmd_advise(args)
+    except advisor.AdvisorError as e:
+        print(f"cpool: {e}", file=sys.stderr)
+        return e.code
     except (config.ConfigError, accounts.AccountError, CliError) as e:
         print(f"cpool: {e}", file=sys.stderr)
         return 2

@@ -133,6 +133,35 @@ order = 2
 
 `order` sets the warm-up order. `capacity` can override the plan size cpool reads from the login.
 
+## Advisor
+
+`cpool advise` sends a question plus a facts file to Fable on an Anthropic API key, so it spends the API credit a Max plan includes instead of the subscription. Fable never runs tools or reads the disk; it sees only the question, the facts and any `--attach` files.
+
+Setup: `cpool advise setup` stores the key in the Keychain (service `cpool-advisor`), checks it reaches the model, and installs the `fable` skill (into `~/.cpool/shared/skills` when it exists, else `~/.claude/skills`). Then add `Bash(cpool advise:*)` to your permissions allowlist and `When I say "ask Fable", use the fable skill.` to CLAUDE.md yourself.
+
+Use:
+
+```
+cpool advise ask "Which design?" --facts facts.md [--attach FILE ...] [--thread new|ID] [--json]
+cpool advise key set | clear | status [--check]
+cpool advise usage [--json]
+```
+
+A thread allows `max_rounds` rounds; the last one asks Fable for a verdict. Exit codes: 0 verdict, 3 Fable needs more facts (answer them with `--thread ID`), 2 usage/config/key/API error, 4 cap reached, 5 refusal.
+
+Cap: every call first reserves its worst-case cost (input tokens at the 1h cache-write price plus `max_tokens` of output) and is refused when this cycle's spend plus that reservation would pass `monthly_cap_usd`. The cycle resets on `cycle_day`. Spend is kept in `~/.cpool/advisor/ledger.jsonl`.
+
+```toml
+[advisor]
+model = "claude-fable-5-1"
+effort = "high"            # low|medium|high|xhigh|max
+max_tokens = 32000
+monthly_cap_usd = 100.0
+cycle_day = 1              # 1..28
+max_rounds = 3             # 1..6
+max_attach_bytes = 2000000
+```
+
 ## Things to know
 
 - Running more than one account is your call. Anthropic's consumer terms forbid sharing a login and automated access outside the official tools. cpool only drives the official CLI with your own logins and never uses usage credits, but read the terms yourself.

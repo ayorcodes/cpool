@@ -32,3 +32,7 @@ def shared_dir() -> Path:
 
 def accounts_dir() -> Path:
     return home() / "accounts"
+
+
+def advisor_dir() -> Path:
+    return home() / "advisor"
