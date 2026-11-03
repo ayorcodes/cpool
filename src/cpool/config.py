@@ -6,7 +6,7 @@ import os
 import re
 import tempfile
 import tomllib
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from . import paths
@@ -42,9 +42,21 @@ class Pool:
 
 
 @dataclass(frozen=True)
+class Advisor:
+    model: str = "claude-fable-5-1"
+    effort: str = "high"
+    max_tokens: int = 32000
+    monthly_cap_usd: float = 100.0
+    cycle_day: int = 1
+    max_rounds: int = 3
+    max_attach_bytes: int = 2000000
+
+
+@dataclass(frozen=True)
 class Config:
     pool: Pool
     accounts: tuple[Account, ...]
+    advisor: Advisor = field(default_factory=Advisor)
 
 
 _NAME_RE = re.compile(r"[a-z0-9-]+")
@@ -78,6 +90,48 @@ def _parse_pool(raw: dict) -> Pool:
         if k != "jitter_s" and (isinstance(v, bool) or not isinstance(v, (int, float))):
             raise ConfigError(f"pool.{k} must be a number")
     return Pool(**kw)
+
+
+_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+def _parse_advisor(raw: dict) -> Advisor:
+    from .advisor import PRICES
+
+    if not isinstance(raw, dict):
+        raise ConfigError("[advisor] must be a table")
+    known = {f.name for f in fields(Advisor)}
+    unknown = set(raw) - known
+    if unknown:
+        raise ConfigError(f"unknown [advisor] keys: {', '.join(sorted(unknown))}")
+
+    def num(k: str, lo: float, hi: float, ints: bool = True):
+        v = raw.get(k)
+        if v is None:
+            return getattr(Advisor, k)
+        ok_type = isinstance(v, int) if ints else isinstance(v, (int, float))
+        if isinstance(v, bool) or not ok_type or not lo <= v <= hi:
+            raise ConfigError(f"advisor.{k} must be {'an integer' if ints else 'a number'} in [{lo}, {hi}]")
+        return v
+
+    model = raw.get("model", Advisor.model)
+    if model not in PRICES:
+        raise ConfigError(f"advisor.model must be one of: {', '.join(PRICES)}")
+    effort = raw.get("effort", Advisor.effort)
+    if effort not in _EFFORTS:
+        raise ConfigError(f"advisor.effort must be one of: {', '.join(_EFFORTS)}")
+    cap = raw.get("monthly_cap_usd", Advisor.monthly_cap_usd)
+    if isinstance(cap, bool) or not isinstance(cap, (int, float)) or cap <= 0:
+        raise ConfigError("advisor.monthly_cap_usd must be a number > 0")
+    return Advisor(
+        model=model,
+        effort=effort,
+        max_tokens=num("max_tokens", 1, 10**7),
+        monthly_cap_usd=float(cap),
+        cycle_day=num("cycle_day", 1, 28),
+        max_rounds=num("max_rounds", 1, 6),
+        max_attach_bytes=num("max_attach_bytes", 1, 10**10),
+    )
 
 
 def _parse_account(raw: dict, idx: int) -> Account:
@@ -137,7 +191,7 @@ def load(path: Path | None = None) -> Config:
         raise ConfigError("[[account]] must be an array of tables")
     accounts = [_parse_account(r, i) for i, r in enumerate(raw_accts)]
     _validate(accounts)
-    return Config(pool, tuple(accounts))
+    return Config(pool, tuple(accounts), _parse_advisor(data.get("advisor", {})))
 
 
 def _q(s: str) -> str:
@@ -165,6 +219,8 @@ def _dump(cfg: Config) -> str:
                 f"order = {a.order}", f"enabled = {_val(a.enabled)}"]
         if a.capacity is not None:
             out.append(f"capacity = {_val(a.capacity)}")
+    if cfg.advisor != Advisor():  # keep a user's [advisor] section across account writes
+        out += ["", "[advisor]"] + [f"{f.name} = {_val(getattr(cfg.advisor, f.name))}" for f in fields(Advisor)]
     return "\n".join(out) + "\n"
 
 
@@ -205,7 +261,7 @@ def save_account(acct: Account) -> None:
         else:
             accounts.append(acct)
         _validate(accounts)
-        _write_atomic(paths.config_path(), _dump(Config(cfg.pool, tuple(accounts))))
+        _write_atomic(paths.config_path(), _dump(Config(cfg.pool, tuple(accounts), cfg.advisor)))
     finally:
         os.close(fd)
 
@@ -217,6 +273,6 @@ def remove_account(name: str) -> None:
         accounts = [a for a in cfg.accounts if a.name != name]
         if len(accounts) == len(cfg.accounts):
             raise ConfigError(f"no such account: {name}")
-        _write_atomic(paths.config_path(), _dump(Config(cfg.pool, tuple(accounts))))
+        _write_atomic(paths.config_path(), _dump(Config(cfg.pool, tuple(accounts), cfg.advisor)))
     finally:
         os.close(fd)
