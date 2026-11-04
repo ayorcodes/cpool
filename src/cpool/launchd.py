@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -18,11 +19,26 @@ def _agents_dir() -> Path:
     return Path.home() / "Library" / "LaunchAgents"
 
 
+def _launchd_path(cpool_bin: str) -> str:
+    """launchd's default PATH lacks ~/.local/bin, where `claude` lives."""
+    dirs: list[str] = []
+    claude = shutil.which("claude")
+    if claude:
+        dirs.append(str(Path(claude).parent))
+    if os.path.isabs(cpool_bin):
+        dirs.append(str(Path(cpool_bin).parent))
+    dirs += os.environ.get("PATH", "").split(":")
+    dirs += "/usr/bin:/bin:/usr/sbin:/sbin".split(":")
+    return ":".join(dict.fromkeys(d for d in dirs if d))
+
+
 def _plists(cfg: Config, cpool_bin: str) -> dict[str, dict]:
     log = paths.log_dir()
+    env = {"PATH": _launchd_path(cpool_bin)}
     return {
         WARM: {
             "Label": WARM,
+            "EnvironmentVariables": env,
             "ProgramArguments": [cpool_bin, "warm", "--due"],
             "StartCalendarInterval": [
                 {"Hour": s.hour, "Minute": s.minute} for s in schedule.plan(cfg)
@@ -32,6 +48,7 @@ def _plists(cfg: Config, cpool_bin: str) -> dict[str, dict]:
         },
         POLL: {
             "Label": POLL,
+            "EnvironmentVariables": env,
             "ProgramArguments": [cpool_bin, "poll"],
             "StartInterval": cfg.pool.poll_min * 60,
             "RunAtLoad": True,
