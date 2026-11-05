@@ -4,7 +4,7 @@ cpool lets you use several Claude subscriptions from Claude Code as one pool. Ea
 
 It runs the official `claude` CLI. There is no proxy, and cpool never copies, refreshes or exports a login.
 
-macOS only for now. Python 3.12+, no dependencies.
+macOS only for now.
 
 ## How it works
 
@@ -48,9 +48,24 @@ A warm-up only runs when the account has no window open, so it never cuts a wind
 ## Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/ayorcodes/cpool/main/install.sh | sh
+```
+
+No Python or other dependencies needed: it installs a prebuilt binary to `~/.local/share/cpool/cpool.dist` and links `~/.local/bin/cpool` to it. Re-run to upgrade. Uninstall with `curl -fsSL https://raw.githubusercontent.com/ayorcodes/cpool/main/install.sh | sh -s -- --uninstall`.
+
+From source:
+
+```sh
 git clone https://github.com/ayorcodes/cpool
 cd cpool
 uv tool install .
+```
+
+Building the release binary (maintainers; needs Python 3.12+ and Xcode CLT):
+
+```sh
+scripts/build-binary.sh   # writes release/cpool-darwin-<arch>.tar.gz and .sha256
+gh release create vX.Y.Z release/*
 ```
 
 ## Setup

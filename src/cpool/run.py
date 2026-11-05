@@ -137,7 +137,9 @@ def _plugin_dir() -> str:
 
 
 def _cpool_bin() -> str:
-    return shutil.which("cpool") or f"{sys.executable} -m cpool"
+    # Nuitka sets __compiled__; there sys.executable is the binary and `-m cpool` is invalid.
+    fallback = sys.executable if "__compiled__" in globals() else f"{sys.executable} -m cpool"
+    return shutil.which("cpool") or fallback
 
 
 def _is_ours(cmd: str) -> bool:
