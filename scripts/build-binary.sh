@@ -84,7 +84,7 @@ mkdir -p "$SMOKE_DIR"
     "$BIN" status >/dev/null
     "$BIN" advise --help >/dev/null
 )
-for f in cpool/plugin/hooks/hooks.json cpool/assets/fable/SKILL.md; do
+for f in cpool/plugin/hooks/hooks.json cpool/assets/ask-fable/SKILL.md; do
     [ -f "$DIST_OUT/$f" ] || { echo "error: dist is missing $f" >&2; exit 1; }
 done
 
