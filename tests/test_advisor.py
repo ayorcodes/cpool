@@ -289,6 +289,38 @@ def test_remove_deletes_only_our_rule(env, home, capsys):
     assert not skill.exists()
 
 
+LEGACY = "---\nname: fable\ndescription: Ask Fable for a decision, plan or diagnosis.\n---\nold\n"
+
+
+def test_install_writes_ask_fable(env, home):
+    dst = advisor.install_skill()
+    assert dst.parent.name == "ask-fable" and dst.read_text() == advisor.skill_text()
+
+
+def test_install_removes_legacy_skill(env, home):
+    legacy = advisor.skill_target().parent.parent / "fable" / "SKILL.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(LEGACY)
+    advisor.install_skill()
+    assert not legacy.parent.exists() and advisor.skill_target().exists()
+
+
+def test_install_keeps_modified_legacy_skill(env, home):
+    legacy = advisor.skill_target().parent.parent / "fable" / "SKILL.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(LEGACY.replace("Ask Fable for", "My own"))
+    advisor.install_skill()
+    assert legacy.exists()
+
+
+def test_install_survives_an_unreadable_legacy_skill(env, home):
+    legacy = advisor.skill_target().parent.parent / "fable" / "SKILL.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"\xff\xfe\x00bad")
+    advisor.install_skill()
+    assert legacy.exists() and advisor.skill_target().exists()
+
+
 def test_shared_settings_take_precedence(env, home):
     home.write_text("{}")
     shared = paths.shared_dir() / "settings.json"

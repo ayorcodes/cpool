@@ -340,14 +340,34 @@ def ask(adv, question: str, facts: Path, attach: list[Path], thread: str = "new"
 
 # ---- skill ----------------------------------------------------------------
 
+SKILL_DIR = "ask-fable"
+LEGACY_SKILL_DIR = "fable"
+
+
+def _remove_legacy_skill() -> None:
+    """Drop the pre-rename `fable` skill, but only if it is cpool's own."""
+    old = skill_target().parent.parent / LEGACY_SKILL_DIR / "SKILL.md"
+    try:
+        head = old.read_text().split("---")[1].splitlines()
+    except (OSError, IndexError, UnicodeDecodeError):
+        return
+    if "name: fable" not in head or not any(l.startswith("description: Ask Fable for a decision") for l in head):
+        return
+    try:
+        old.unlink()
+        old.parent.rmdir()
+    except OSError:
+        pass  # a leftover legacy copy is harmless; never fail the install over it
+
+
 def skill_text() -> str:
-    return resources.files("cpool").joinpath("assets/fable/SKILL.md").read_text()
+    return resources.files("cpool").joinpath("assets/ask-fable/SKILL.md").read_text()
 
 
 def skill_target() -> Path:
     shared = paths.shared_dir() / "skills"
     base = shared if shared.is_dir() else Path.home() / ".claude" / "skills"
-    return base / "fable" / "SKILL.md"
+    return base / SKILL_DIR / "SKILL.md"
 
 
 def install_skill(force: bool = False) -> Path:
@@ -356,11 +376,13 @@ def install_skill(force: bool = False) -> Path:
         raise AdvisorError(f"{dst} exists and differs; rerun with --force to replace it")
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(text)
+    _remove_legacy_skill()
     return dst
 
 
 def remove_skill(force: bool = False) -> str:
     dst = skill_target()
+    _remove_legacy_skill()
     if not dst.exists():
         return "already"
     if dst.read_bytes() != skill_text().encode() and not force:

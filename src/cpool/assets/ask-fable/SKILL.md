@@ -1,6 +1,6 @@
 ---
-name: fable
-description: Ask Fable for a decision, plan or diagnosis on a hard problem, paid from API credits instead of the subscription. Use when the user says "ask Fable", "hand it to Fable", "get Fable's verdict", or runs /fable.
+name: ask-fable
+description: Ask Fable for a decision, plan or diagnosis on a hard problem, paid from API credits instead of the subscription. Use when the user says "ask Fable", "hand it to Fable", "get Fable's verdict", or runs /ask-fable.
 ---
 
 Fable advises; this session does the work. Fable cannot read the repo or run anything, so its answer is only as good as the facts you send.
