@@ -154,7 +154,7 @@ order = 2
 
 `cpool advise` sends a question plus a facts file to Fable on an Anthropic API key, so it spends the API credit a Max plan includes instead of the subscription. Fable never runs tools or reads the disk; it sees only the question, the facts and any `--attach` files.
 
-Setup: `cpool advise setup` stores the key in the Keychain (service `cpool-advisor`), checks it reaches the model, and installs the `ask-fable` skill (into `~/.cpool/shared/skills` when it exists, else `~/.claude/skills`). It also adds `Bash(cpool advise:*)` to `permissions.allow` in `~/.cpool/shared/settings.json` when that file exists, else `~/.claude/settings.json`, and leaves the file alone if it isn't valid JSON. Nothing else to do: the skill triggers on "ask Fable" or `/ask-fable`. `cpool advise setup --remove` undoes the skill and the allow rule (add `--force` to delete a modified skill); the Keychain key stays until `key clear`.
+Setup: `cpool advise setup` stores the key in the Keychain (service `cpool-advisor`), checks it reaches the model, and installs the `ask-fable` and `ask-opus` skills (into `~/.cpool/shared/skills` when it exists, else `~/.claude/skills`). It also adds `Bash(cpool advise:*)` to `permissions.allow` in `~/.cpool/shared/settings.json` when that file exists, else `~/.claude/settings.json`, and leaves the file alone if it isn't valid JSON. Nothing else to do: the skills trigger on "ask Fable" / `/ask-fable` and "ask Opus" / `/ask-opus` (the latter pins `--model claude-opus-5-5`). `cpool advise setup --remove` undoes the skills and the allow rule (add `--force` to delete a modified skill); the Keychain key stays until `key clear`.
 
 Use:
 

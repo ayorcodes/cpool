@@ -320,14 +320,16 @@ def _cmd_advise(args) -> int:
                     print(f"{k}: {v}")
         case "setup":
             if args.remove:
-                print(f"skill: {advisor.remove_skill(args.force)}")
+                for name in advisor.SKILLS:
+                    print(f"skill {name}: {advisor.remove_skill(name, args.force)}")
                 print(f"allow rule: {advisor.remove_allow_rule()}")
                 return 0
             if advisor.get_key() is None:
                 advisor.prompt_key()
             if _advise_key("status", True, adv):
                 return 2
-            print(f"skill installed: {advisor.install_skill(args.force)}")
+            for dst in advisor.install_skills(args.force):
+                print(f"skill installed: {dst}")
             print(f"allow rule: {advisor.add_allow_rule()}")
     return 0
 
