@@ -340,13 +340,13 @@ def ask(adv, question: str, facts: Path, attach: list[Path], thread: str = "new"
 
 # ---- skill ----------------------------------------------------------------
 
-SKILL_DIR = "ask-fable"
+SKILLS = ("ask-fable", "ask-opus")
 LEGACY_SKILL_DIR = "fable"
 
 
 def _remove_legacy_skill() -> None:
     """Drop the pre-rename `fable` skill, but only if it is cpool's own."""
-    old = skill_target().parent.parent / LEGACY_SKILL_DIR / "SKILL.md"
+    old = skill_target(SKILLS[0]).parent.parent / LEGACY_SKILL_DIR / "SKILL.md"
     try:
         head = old.read_text().split("---")[1].splitlines()
     except (OSError, IndexError, UnicodeDecodeError):
@@ -360,18 +360,18 @@ def _remove_legacy_skill() -> None:
         pass  # a leftover legacy copy is harmless; never fail the install over it
 
 
-def skill_text() -> str:
-    return resources.files("cpool").joinpath("assets/ask-fable/SKILL.md").read_text()
+def skill_text(name: str) -> str:
+    return resources.files("cpool").joinpath(f"assets/{name}/SKILL.md").read_text()
 
 
-def skill_target() -> Path:
+def skill_target(name: str) -> Path:
     shared = paths.shared_dir() / "skills"
     base = shared if shared.is_dir() else Path.home() / ".claude" / "skills"
-    return base / SKILL_DIR / "SKILL.md"
+    return base / name / "SKILL.md"
 
 
-def install_skill(force: bool = False) -> Path:
-    dst, text = skill_target(), skill_text()
+def install_skill(name: str, force: bool = False) -> Path:
+    dst, text = skill_target(name), skill_text(name)
     if dst.exists() and dst.read_text() != text and not force:
         raise AdvisorError(f"{dst} exists and differs; rerun with --force to replace it")
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -380,12 +380,20 @@ def install_skill(force: bool = False) -> Path:
     return dst
 
 
-def remove_skill(force: bool = False) -> str:
-    dst = skill_target()
+def install_skills(force: bool = False) -> list[Path]:
+    if not force:
+        clashes = [str(dst) for n in SKILLS if (dst := skill_target(n)).exists() and dst.read_text() != skill_text(n)]
+        if clashes:
+            raise AdvisorError(f"{', '.join(clashes)} exist and differ; rerun with --force to replace them")
+    return [install_skill(n, force) for n in SKILLS]
+
+
+def remove_skill(name: str, force: bool = False) -> str:
+    dst = skill_target(name)
     _remove_legacy_skill()
     if not dst.exists():
         return "already"
-    if dst.read_bytes() != skill_text().encode() and not force:
+    if dst.read_bytes() != skill_text(name).encode() and not force:
         return "skipped: modified"
     dst.unlink()
     try:

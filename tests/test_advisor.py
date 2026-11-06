@@ -279,11 +279,12 @@ def test_setup_skips_invalid_settings(env, home, capsys):
 def test_remove_deletes_only_our_rule(env, home, capsys):
     home.write_text(json.dumps({"permissions": {"allow": ["Read", advisor.ALLOW_RULE, "Bash(cpool advise:ask)"]}}))
     assert cli.main(["advise", "setup"]) == 0
-    skill = advisor.skill_target()
-    assert skill.exists()
+    skill, other = advisor.skill_target("ask-fable"), advisor.skill_target("ask-opus")
+    assert skill.exists() and other.exists()
     skill.write_text("edited")
     assert cli.main(["advise", "setup", "--remove"]) == 0
-    assert skill.exists() and "skill: skipped: modified" in capsys.readouterr().out
+    assert skill.exists() and not other.exists()
+    assert "skill ask-fable: skipped: modified" in capsys.readouterr().out
     assert json.loads(home.read_text())["permissions"]["allow"] == ["Read", "Bash(cpool advise:ask)"]
     assert cli.main(["advise", "setup", "--remove", "--force"]) == 0
     assert not skill.exists()
@@ -292,33 +293,43 @@ def test_remove_deletes_only_our_rule(env, home, capsys):
 LEGACY = "---\nname: fable\ndescription: Ask Fable for a decision, plan or diagnosis.\n---\nold\n"
 
 
-def test_install_writes_ask_fable(env, home):
-    dst = advisor.install_skill()
-    assert dst.parent.name == "ask-fable" and dst.read_text() == advisor.skill_text()
+@pytest.mark.parametrize("name", ["ask-fable", "ask-opus"])
+def test_install_writes_each_skill(env, home, name):
+    dst = advisor.install_skill(name)
+    assert dst.parent.name == name and dst.read_text() == advisor.skill_text(name)
+
+
+def test_install_skills_is_all_or_nothing(env, home):
+    opus = advisor.skill_target("ask-opus")
+    opus.parent.mkdir(parents=True)
+    opus.write_text("mine")
+    with pytest.raises(advisor.AdvisorError, match="ask-opus"):
+        advisor.install_skills()
+    assert not advisor.skill_target("ask-fable").exists() and opus.read_text() == "mine"
 
 
 def test_install_removes_legacy_skill(env, home):
-    legacy = advisor.skill_target().parent.parent / "fable" / "SKILL.md"
+    legacy = advisor.skill_target("ask-fable").parent.parent / "fable" / "SKILL.md"
     legacy.parent.mkdir(parents=True)
     legacy.write_text(LEGACY)
-    advisor.install_skill()
-    assert not legacy.parent.exists() and advisor.skill_target().exists()
+    advisor.install_skill("ask-fable")
+    assert not legacy.parent.exists() and advisor.skill_target("ask-fable").exists()
 
 
 def test_install_keeps_modified_legacy_skill(env, home):
-    legacy = advisor.skill_target().parent.parent / "fable" / "SKILL.md"
+    legacy = advisor.skill_target("ask-fable").parent.parent / "fable" / "SKILL.md"
     legacy.parent.mkdir(parents=True)
     legacy.write_text(LEGACY.replace("Ask Fable for", "My own"))
-    advisor.install_skill()
+    advisor.install_skill("ask-fable")
     assert legacy.exists()
 
 
 def test_install_survives_an_unreadable_legacy_skill(env, home):
-    legacy = advisor.skill_target().parent.parent / "fable" / "SKILL.md"
+    legacy = advisor.skill_target("ask-fable").parent.parent / "fable" / "SKILL.md"
     legacy.parent.mkdir(parents=True)
     legacy.write_bytes(b"\xff\xfe\x00bad")
-    advisor.install_skill()
-    assert legacy.exists() and advisor.skill_target().exists()
+    advisor.install_skill("ask-fable")
+    assert legacy.exists() and advisor.skill_target("ask-fable").exists()
 
 
 def test_shared_settings_take_precedence(env, home):
