@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from .config import Config
+from .config import Account, Config
 
 WINDOW_MIN = 300
 SLOT_GRACE_MIN = 60
@@ -20,8 +20,28 @@ class WarmSlot:
     minute: int
 
 
-def plan(cfg: Config) -> list[WarmSlot]:
-    accts = sorted((a for a in cfg.accounts if a.enabled), key=lambda a: a.order)
+def _enabled(cfg: Config) -> list[Account]:
+    return sorted((a for a in cfg.accounts if a.enabled), key=lambda a: a.order)
+
+
+def active(cfg: Config, state: dict) -> list[Account]:
+    """Enabled accounts that can take a warm slot; all of them if none can."""
+    states = state.get("accounts") or {}
+
+    def warmable(a: Account) -> bool:
+        st = states.get(a.name) or {}
+        auth = st.get("auth")
+        if auth in UNWARMABLE_AUTH:
+            return False
+        failed = st.get("warm_failed_at")
+        return not (auth == "expired" and failed is not None and failed > (st.get("warmed_at") or 0))
+
+    enabled = _enabled(cfg)
+    return [a for a in enabled if warmable(a)] or enabled
+
+
+def plan(cfg: Config, state: dict | None = None) -> list[WarmSlot]:
+    accts = _enabled(cfg) if state is None else active(cfg, state)
     n = len(accts)
     if not n:
         return []
@@ -42,7 +62,7 @@ def due(cfg: Config, state: dict, now: datetime) -> list[str]:
     ts = now.timestamp()
     accounts = state.get("accounts") or {}
     sessions = state.get("sessions") or {}
-    slots = plan(cfg)
+    slots = plan(cfg, state)
     out: list[str] = []
     for a in sorted((a for a in cfg.accounts if a.enabled), key=lambda a: a.order):
         mine = [s for s in slots if s.account == a.name]

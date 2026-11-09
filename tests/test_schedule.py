@@ -78,3 +78,46 @@ def test_due_skips_warm_in_flight():
     ts = NOW.timestamp()
     assert schedule.due(cfg(1), {"accounts": {"a0": {"warm_started_at": ts - 60}}}, NOW) == []
     assert schedule.due(cfg(1), {"accounts": {"a0": {"warm_started_at": ts - 200}}}, NOW) == ["a0"]
+
+
+def _times_with(c: Config, st: dict, name: str) -> list[str]:
+    return [f"{s.hour:02d}:{s.minute:02d}" for s in schedule.plan(c, st) if s.account == name]
+
+
+def _names(c: Config, accounts: dict) -> list[str]:
+    return [a.name for a in schedule.active(c, {"accounts": accounts})]
+
+
+def test_active_excludes_no_plan_and_missing():
+    st = {"a0": {"auth": "no-plan"}, "a1": {"auth": "missing"}}
+    assert _names(cfg(3), st) == ["a2"]
+
+
+def test_active_excludes_expired_with_later_failed_warm():
+    st = {"a0": {"auth": "expired", "warmed_at": 100, "warm_failed_at": 200}}
+    assert _names(cfg(2), st) == ["a1"]
+
+
+def test_active_keeps_expired_with_successful_warm_or_never_warmed():
+    st = {
+        "a0": {"auth": "expired", "warmed_at": 300, "warm_failed_at": 200},
+        "a1": {"auth": "expired"},
+    }
+    assert _names(cfg(2), st) == ["a0", "a1"]
+
+
+def test_active_falls_back_to_all_enabled_when_none_active():
+    st = {"a0": {"auth": "no-plan"}, "a1": {"auth": "missing"}}
+    assert _names(cfg(2), st) == ["a0", "a1"]
+
+
+def test_plan_with_state_skips_inactive_account():
+    c = cfg(3)
+    st = {"accounts": {"a0": {"auth": "no-plan"}}}
+    assert _times_with(c, st, "a0") == []
+    assert _times_with(c, st, "a1")[0] == "03:02"
+    assert _times_with(c, st, "a2") == ["05:32", "10:32", "15:32", "20:32"]
+
+
+def test_plan_without_state_keeps_all_enabled():
+    assert times(cfg(3), "a2")[0] == "06:02"

@@ -7,7 +7,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import paths, schedule
+from . import paths, schedule, state
 from .config import Config
 
 PREFIX = "com.cpool."
@@ -41,7 +41,7 @@ def _plists(cfg: Config, cpool_bin: str) -> dict[str, dict]:
             "EnvironmentVariables": env,
             "ProgramArguments": [cpool_bin, "warm", "--due"],
             "StartCalendarInterval": [
-                {"Hour": s.hour, "Minute": s.minute} for s in schedule.plan(cfg)
+                {"Hour": s.hour, "Minute": s.minute} for s in schedule.plan(cfg, state.read())
             ],
             "StandardOutPath": str(log / "warm.out"),
             "StandardErrorPath": str(log / "warm.err"),
@@ -78,8 +78,12 @@ def _bootstrap(domain: str, path: Path) -> None:
     raise RuntimeError(f"launchctl bootstrap {path.name} failed: {r.stderr.strip()}")
 
 
-def install(cfg: Config, cpool_bin: str, dry_run: bool = False) -> dict[str, dict]:
+def install(
+    cfg: Config, cpool_bin: str, dry_run: bool = False, only: tuple[str, ...] | None = None
+) -> dict[str, dict]:
     plists = _plists(cfg, cpool_bin)
+    if only is not None:
+        plists = {k: v for k, v in plists.items() if k in only}
     if dry_run:
         return plists
     paths.log_dir().mkdir(parents=True, exist_ok=True)
@@ -102,7 +106,7 @@ def uninstall() -> None:
 
 def pmset_apply(cfg: Config) -> str | None:
     """The wake command for the CLI to print; never runs sudo."""
-    slots = schedule.plan(cfg)
+    slots = schedule.plan(cfg, state.read())
     if not slots:
         return None
     m = (min(s.hour * 60 + s.minute for s in slots) - 3) % 1440

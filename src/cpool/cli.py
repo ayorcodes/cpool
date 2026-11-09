@@ -205,11 +205,16 @@ def _resets(slot: schedule.WarmSlot) -> list[str]:
 
 def _cmd_plan(apply: bool) -> int:
     cfg = config.load()
-    slots = schedule.plan(cfg)
+    st = state.read()
+    slots = schedule.plan(cfg, st)
     if not slots:
         print("no enabled accounts")
     for s in slots:
         print(f"{s.account}: warm {s.hour:02d}:{s.minute:02d}, resets {' '.join(_resets(s))}")
+    live = {a.name for a in schedule.active(cfg, st)}
+    idle = [a.name for a in cfg.accounts if a.enabled and a.name not in live]
+    if idle:
+        print(f"inactive (no warm slots): {', '.join(idle)}")
     if apply:
         launchd.install(cfg, _cpool_bin())
         print("launchd agents installed")
@@ -235,6 +240,19 @@ def _refresh_schedule() -> None:
     launchd.install(cfg, _cpool_bin())
     print("schedule updated")
     _print_pmset(cfg)
+
+
+def _replan_if_active_changed(cfg: config.Config) -> None:
+    names = [a.name for a in schedule.active(cfg, state.read())]
+    previous = state.read().get("plan_active")
+    if previous == names:
+        return
+    warm_plist = Path.home() / "Library" / "LaunchAgents" / f"{launchd.WARM}.plist"
+    if previous is not None and warm_plist.exists():
+        launchd.install(cfg, _cpool_bin(), only=(launchd.WARM,))
+        journal.log("replan", active=names)
+    with state.locked() as st:
+        st["plan_active"] = names
 
 
 def _cmd_warm(due: bool, name: str | None) -> int:
@@ -402,6 +420,10 @@ def main(argv: list[str] | None = None) -> int:
                     warm.warm_due(cfg)
                 except Exception as e:  # noqa: BLE001
                     journal.log("error", where="cli.poll.warm", error=type(e).__name__)
+                try:
+                    _replan_if_active_changed(cfg)
+                except Exception as e:  # noqa: BLE001
+                    journal.log("error", where="cli.poll.replan", error=type(e).__name__)
             case "statusline":
                 from . import statusline
 
