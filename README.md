@@ -170,7 +170,7 @@ Cap: every call first reserves its worst-case cost (input tokens at the 1h cache
 
 ```toml
 [advisor]
-model = "claude-fable-5-1"
+model = "claude-fable-5-2"
 effort = "high"            # low|medium|high|xhigh|max
 max_tokens = 32000
 monthly_cap_usd = 100.0

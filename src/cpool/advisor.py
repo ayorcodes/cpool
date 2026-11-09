@@ -20,6 +20,7 @@ from . import journal, paths
 
 # USD per million tokens: (input, output, cache_write_1h, cache_read)
 PRICES: dict[str, tuple[float, float, float, float]] = {
+    "claude-fable-5-2": (8, 40, 16, 0.20),
     "claude-fable-5-1": (10, 50, 20, 0.25),
     "claude-opus-5-5": (4, 20, 8, 0.20),
 }

@@ -100,8 +100,8 @@ def test_reserve_then_final_with_cost(env):
     assert _ask(env) == 0
     reserve, final = _rows()
     assert reserve["kind"] == "reserve" and final["kind"] == "final" and reserve["id"] == final["id"]
-    assert reserve["worst"] == pytest.approx((1000 * 20 + 32000 * 50) / 1e6)
-    assert final["cost_usd"] == pytest.approx((1000 * 10 + 2000 * 50 + 500 * 20) / 1e6)
+    assert reserve["worst"] == pytest.approx((1000 * 16 + 32000 * 40) / 1e6)
+    assert final["cost_usd"] == pytest.approx((1000 * 8 + 2000 * 40 + 500 * 16) / 1e6)
 
 
 def test_open_reservation_counts(env):

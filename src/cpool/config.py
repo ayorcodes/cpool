@@ -43,7 +43,7 @@ class Pool:
 
 @dataclass(frozen=True)
 class Advisor:
-    model: str = "claude-fable-5-1"
+    model: str = "claude-fable-5-2"
     effort: str = "high"
     max_tokens: int = 32000
     monthly_cap_usd: float = 100.0
