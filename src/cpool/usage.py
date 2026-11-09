@@ -2,6 +2,7 @@
 never logged, written, refreshed or put in an exception message."""
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import subprocess
@@ -125,11 +126,26 @@ def fetch(acct: Account) -> dict:
     return normalize(body, int(time.time()), t if isinstance(t, str) else None)
 
 
-def _skip(st: dict, name: str, now: int) -> str | None:
+def _fingerprint(acct: Account) -> str | None:
+    tok = token(acct)
+    return hashlib.sha256(tok.encode()).hexdigest()[:12] if tok else None
+
+
+def _backoff(a: dict, now: int, start_s: int) -> None:
+    prev = a.get("poll_backoff_s")
+    step = min(prev * 2, BACKOFF_MAX_S) if isinstance(prev, (int, float)) and prev else start_s
+    a["poll_backoff_s"] = step
+    a["poll_backoff_until"] = now + step
+
+
+def _skip(st: dict, acct: Account, now: int) -> str | None:
+    name = acct.name
     a = st.get("accounts", {}).get(name, {})
     until = a.get("poll_backoff_until")
     if isinstance(until, (int, float)) and until > now:
-        return "backoff"
+        fp = a.get("token_fp")
+        if fp is None or fp == _fingerprint(acct):
+            return "backoff"
     for s in st.get("sessions", {}).values():
         ts = s.get("updated_at")
         if s.get("account") == name and isinstance(ts, (int, float)) and now - ts < FRESH_S:
@@ -141,13 +157,14 @@ def poll(cfg: Config, now: int) -> None:
     for acct in cfg.accounts:
         if not acct.enabled:
             continue
-        if _skip(state.read(), acct.name, now):
+        if _skip(state.read(), acct, now):
             continue
         result, err = None, None
         try:
             result = fetch(acct)
         except UsageError as e:
             err = e
+        fp = _fingerprint(acct) if err is not None and err.status == 403 else None
         with state.locked() as st:
             a = state.account_state(st, acct.name)
             if result is not None:
@@ -155,20 +172,23 @@ def poll(cfg: Config, now: int) -> None:
                 a.update(result)
                 a["poll_backoff_until"] = None
                 a["poll_backoff_s"] = None
+                a["token_fp"] = None
                 journal.log("poll", account=acct.name, status=200,
                             five_hour=result.get("five_hour", {}).get("used"),
                             seven_day=result.get("seven_day", {}).get("used"))
                 continue
             status = err.status
-            if status in (401, 403):
+            if status == 401:
                 a["auth"] = "expired"
+            elif status == 403:
+                a["auth"] = "no-plan"
+                _backoff(a, now, cfg.pool.poll_min * 60)
+                a["token_fp"] = fp
             elif isinstance(err, CredentialsMissing):
                 a["auth"] = "missing"
             elif status == 429:
-                prev = a.get("poll_backoff_s")
-                step = min(prev * 2, BACKOFF_MAX_S) if isinstance(prev, (int, float)) and prev else cfg.pool.poll_min * 60
-                a["poll_backoff_s"] = step
-                a["poll_backoff_until"] = now + step
+                _backoff(a, now, cfg.pool.poll_min * 60)
+                a["token_fp"] = None
             journal.log("poll", account=acct.name, status=status, error=str(err))
 
 

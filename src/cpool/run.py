@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from . import accounts, config, handoff, journal, paths, router, state
+from . import accounts, config, handoff, journal, paths, router, schedule, state
 
 MAX_RELAUNCHES = 5
 _warned_missing: set[str] = set()  # --settings paths already reported this `cpool run`
@@ -192,7 +192,8 @@ def _route(cfg, *, pinned: str | None, model: str | None, now: int, **kw) -> tup
     if d.account is not None:
         return d.account, d.reason, d.scores
     accts = st.get("accounts") or {}
-    cands = [n for n in enabled if (accts.get(n) or {}).get("credits_enabled") is False]
+    cands = [n for n in enabled if (accts.get(n) or {}).get("credits_enabled") is False
+             and (accts.get(n) or {}).get("auth") not in schedule.UNWARMABLE_AUTH]
     if not cands:
         _stderr(f"cpool: no account available ({d.reason}); earliest reset {_hhmm(d.earliest_reset)}")
         return None

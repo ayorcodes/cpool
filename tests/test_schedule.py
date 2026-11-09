@@ -67,3 +67,14 @@ def test_failed_warm_retried_after_15_min_not_before():
 def test_due_aware_now_uses_local_slots():
     from datetime import timezone
     assert schedule.due(cfg(1), {}, NOW.astimezone(timezone.utc)) == ["a0"]
+
+
+def test_due_skips_unwarmable_auth_but_not_expired():
+    for auth, expect in (("no-plan", []), ("missing", []), ("expired", ["a0"])):
+        assert schedule.due(cfg(1), {"accounts": {"a0": {"auth": auth}}}, NOW) == expect
+
+
+def test_due_skips_warm_in_flight():
+    ts = NOW.timestamp()
+    assert schedule.due(cfg(1), {"accounts": {"a0": {"warm_started_at": ts - 60}}}, NOW) == []
+    assert schedule.due(cfg(1), {"accounts": {"a0": {"warm_started_at": ts - 200}}}, NOW) == ["a0"]

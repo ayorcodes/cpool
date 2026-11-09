@@ -398,6 +398,10 @@ def main(argv: list[str] | None = None) -> int:
                 if args.daemon:
                     return usage.poll_daemon(cfg)
                 usage.poll(cfg, int(time.time()))
+                try:
+                    warm.warm_due(cfg)
+                except Exception as e:  # noqa: BLE001
+                    journal.log("error", where="cli.poll.warm", error=type(e).__name__)
             case "statusline":
                 from . import statusline
 
