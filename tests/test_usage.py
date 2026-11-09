@@ -39,6 +39,7 @@ def test_poll_429_backs_off_and_keeps_usage(tmp_path, monkeypatch):
         raise usage.UsageError(429)
 
     monkeypatch.setattr(usage, "fetch", boom)
+    monkeypatch.setattr(usage, "_oauth", lambda a: {"accessToken": "tok1"})
     usage.poll(cfg, 10_000)
     a = state.read()["accounts"]["a"]
     assert a["five_hour"]["used"] == 42.0 and a["left_at"] == 7
@@ -176,3 +177,61 @@ def test_statusline_no_leave_without_a_target(tmp_path, monkeypatch):
 def test_statusline_leaves_when_another_account_is_free(tmp_path, monkeypatch):
     s = _leave_setup(tmp_path, monkeypatch, other=10)
     assert s["leave"] == "soft" and "leave_blocked" not in s
+
+
+def _poll_status(tmp_path, monkeypatch, status, tok="tok1"):
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    cfg = config.Config(config.Pool(), (config.Account("a", tmp_path / "a", 1),))
+    monkeypatch.setattr(usage, "_oauth", lambda a: {"accessToken": tok})
+    calls = []
+
+    def boom(_):
+        calls.append(1)
+        raise usage.UsageError(status)
+
+    monkeypatch.setattr(usage, "fetch", boom)
+    return cfg, calls
+
+
+def test_poll_403_marks_no_plan_and_repolls_only_after_relogin(tmp_path, monkeypatch):
+    cfg, calls = _poll_status(tmp_path, monkeypatch, 403)
+    usage.poll(cfg, 10_000)
+    a = state.read()["accounts"]["a"]
+    assert (a["auth"], a["poll_backoff_until"]) == ("no-plan", 10_600)
+    assert len(a["token_fp"]) == 12 and "tok1" not in json.dumps(a)
+    usage.poll(cfg, 10_100)
+    assert len(calls) == 1
+    monkeypatch.setattr(usage, "_oauth", lambda a: {"accessToken": "tok2"})
+    usage.poll(cfg, 10_200)
+    assert len(calls) == 2
+
+
+def test_poll_401_marks_expired_without_backoff(tmp_path, monkeypatch):
+    cfg, _ = _poll_status(tmp_path, monkeypatch, 401)
+    usage.poll(cfg, 10_000)
+    a = state.read()["accounts"]["a"]
+    assert a["auth"] == "expired" and not a.get("poll_backoff_until")
+
+
+def test_poll_429_backoff_holds_with_token(tmp_path, monkeypatch):
+    cfg, calls = _poll_status(tmp_path, monkeypatch, 429)
+    usage.poll(cfg, 10_000)
+    usage.poll(cfg, 10_100)
+    assert len(calls) == 1
+
+
+def test_poll_429_after_403_and_relogin_keeps_doubling(tmp_path, monkeypatch):
+    cfg, calls = _poll_status(tmp_path, monkeypatch, 403)
+    usage.poll(cfg, 10_000)
+    monkeypatch.setattr(usage, "_oauth", lambda a: {"accessToken": "tok2"})
+
+    def rate_limited(_):
+        calls.append(1)
+        raise usage.UsageError(429)
+
+    monkeypatch.setattr(usage, "fetch", rate_limited)
+    usage.poll(cfg, 10_100)
+    a = state.read()["accounts"]["a"]
+    assert (a["poll_backoff_s"], a["poll_backoff_until"]) == (1200, 11_300)
+    usage.poll(cfg, 10_200)
+    assert len(calls) == 2

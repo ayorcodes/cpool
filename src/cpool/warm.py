@@ -13,13 +13,20 @@ TIMEOUT_S = 120
 
 
 def warm(acct: Account) -> bool:
-    env = dict(os.environ)
-    for k, v in accounts.launch_env(acct).items():
-        if v is None:
-            env.pop(k, None)
-        else:
-            env[k] = v
+    with state.locked() as st:
+        a = state.account_state(st, acct.name)
+        started = a.get("warm_started_at")
+        if started is not None and time.time() - started < schedule.WARM_INFLIGHT_S:
+            return False
+        a["warm_started_at"] = int(time.time())
+    rc = -1
     try:
+        env = dict(os.environ)
+        for k, v in accounts.launch_env(acct).items():
+            if v is None:
+                env.pop(k, None)
+            else:
+                env[k] = v
         rc = subprocess.run(
             ["claude", "-p", "--model", "haiku", "ok"],
             env=env,
@@ -30,16 +37,18 @@ def warm(acct: Account) -> bool:
             stderr=subprocess.DEVNULL,
         ).returncode
     except (subprocess.TimeoutExpired, OSError):
-        rc = -1
-    ok = rc == 0
-    with state.locked() as st:
-        a = state.account_state(st, acct.name)
-        if ok:
-            a["warmed_at"] = int(time.time())
-            a.pop("warm_failed_at", None)
-        else:
-            a["warm_failed_at"] = int(time.time())
-    journal.log("warm", account=acct.name, ok=ok, rc=rc)
+        pass
+    finally:
+        ok = rc == 0
+        with state.locked() as st:
+            a = state.account_state(st, acct.name)
+            a.pop("warm_started_at", None)
+            if ok:
+                a["warmed_at"] = int(time.time())
+                a.pop("warm_failed_at", None)
+            else:
+                a["warm_failed_at"] = int(time.time())
+        journal.log("warm", account=acct.name, ok=ok, rc=rc)
     return ok
 
 

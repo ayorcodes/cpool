@@ -9,6 +9,8 @@ WINDOW_MIN = 300
 SLOT_GRACE_MIN = 60
 SESSION_LIVE_S = 120
 WARM_RETRY_MIN = 15
+WARM_INFLIGHT_S = 150
+UNWARMABLE_AUTH = ("no-plan", "missing")
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,11 @@ def due(cfg: Config, state: dict, now: datetime) -> list[str]:
         if not any(_recent(s, now) for s in mine):
             continue
         st = accounts.get(a.name) or {}
+        if st.get("auth") in UNWARMABLE_AUTH:
+            continue
+        started = st.get("warm_started_at")
+        if started is not None and ts - started < WARM_INFLIGHT_S:
+            continue
         resets = (st.get("five_hour") or {}).get("resets_at")
         if resets is not None and resets > ts:
             continue
