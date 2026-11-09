@@ -134,3 +134,57 @@ def test_account_changes_refresh_installed_schedule(tmp_path, monkeypatch, capsy
     out = capsys.readouterr().out
     assert len(installed) == int(plist)
     assert ("schedule updated" in out and "sudo pmset" in out) == plist
+
+
+def _replan_env(tmp_path, monkeypatch, plist=True):
+    from cpool import config, launchd, schedule, state
+
+    _schedule_env(tmp_path, monkeypatch, plist)
+    active = {"names": ["main"]}
+    monkeypatch.setattr(
+        schedule, "active", lambda cfg, st: [type("A", (), {"name": n})() for n in active["names"]]
+    )
+    calls = []
+    monkeypatch.setattr(launchd, "install", lambda cfg, binary, only=(): calls.append(only))
+    monkeypatch.setattr(cli, "_cpool_bin", lambda: "/x/bin/cpool")
+    return config.load(), active, calls, state
+
+
+def test_replan_first_call_stores_active_without_install(tmp_path, monkeypatch):
+    cfg, _, calls, state = _replan_env(tmp_path, monkeypatch)
+    cli._replan_if_active_changed(cfg)
+    assert state.read()["plan_active"] == ["main"]
+    assert calls == []
+
+
+def test_replan_changed_active_reinstalls_warm_only(tmp_path, monkeypatch):
+    from cpool import launchd
+
+    cfg, active, calls, state = _replan_env(tmp_path, monkeypatch)
+    cli._replan_if_active_changed(cfg)
+    active["names"] = ["main", "claude2"]
+    cli._replan_if_active_changed(cfg)
+    assert calls == [(launchd.WARM,)]
+    assert state.read()["plan_active"] == ["main", "claude2"]
+
+
+def test_replan_retries_after_install_failure(tmp_path, monkeypatch):
+    from cpool import launchd
+
+    cfg, active, calls, state = _replan_env(tmp_path, monkeypatch)
+    cli._replan_if_active_changed(cfg)
+    active["names"] = ["claude2"]
+    attempts = []
+
+    def flaky(cfg, binary, only=()):
+        attempts.append(only)
+        if len(attempts) == 1:
+            raise OSError("launchctl failed")
+
+    monkeypatch.setattr(launchd, "install", flaky)
+    with pytest.raises(OSError):
+        cli._replan_if_active_changed(cfg)
+    assert state.read()["plan_active"] == ["main"]
+    cli._replan_if_active_changed(cfg)
+    assert len(attempts) == 2
+    assert state.read()["plan_active"] == ["claude2"]
