@@ -139,6 +139,11 @@ def test_poll_missing_credentials_marks_auth_missing(tmp_path, monkeypatch):
 
 def test_statusline_writes_state(tmp_path, monkeypatch, capsys):
     _setup_statusline(tmp_path, monkeypatch, 1_000_000)
+    monkeypatch.setenv("NO_COLOR", "1")
+    config.save_account(config.Account("b", tmp_path / "b", 2))
+    config.save_account(config.Account("disabled", tmp_path / "disabled", 3, enabled=False))
+    with state.locked() as st:
+        st["accounts"]["b"] = {"five_hour": {"used": 72, "resets_at": 1_003_600}}
     payload = {"session_id": "s1", "model": {"id": "m"}, "effort": {"level": "high"}, "workspace": {"current_dir": "/w"},
                "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": 1793543399},
                                "seven_day": {"used_percentage": 11, "resets_at": 1793900000}},
@@ -152,7 +157,29 @@ def test_statusline_writes_state(tmp_path, monkeypatch, capsys):
     assert (s["account"], s["run"], s["cwd"], s["model"], s["ctx_used"]) == ("a", "run-1", "/w", "m", 18.0)
     assert s["effort"] == "high"
     assert s["cache"] == {"read": 3, "created": 1} and s["turns"][0]["u5h"] == 40.0
-    assert capsys.readouterr().out.strip() == "cpool:a 5h 40% 7d 11%"
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 2
+    assert lines[0].startswith("● a  5h ▰▰▰▱▱▱▱▱  40% ↻")
+    assert "7d ▰▱▱▱▱▱▱▱  11% ↻" in lines[0]
+    assert lines[1] == "○ b  5h ▰▰▰▰▰▰▱▱  72% ↻1h00m  7d ▱▱▱▱▱▱▱▱   0%"
+
+
+def test_statusline_disabled_accounts_use_compact_fallback(tmp_path, monkeypatch, capsys):
+    _setup_statusline(tmp_path, monkeypatch)
+    monkeypatch.setenv("NO_COLOR", "1")
+    config.save_account(config.Account("a", tmp_path / "acct", 1, enabled=False))
+    _render(monkeypatch, {"rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": 1_003_600}}})
+    assert capsys.readouterr().out.splitlines() == ["cpool:a 5h 40% ↻1h00m 7d ?"]
+
+
+def test_statusline_chain_precedes_account_rows(tmp_path, monkeypatch, capsys):
+    _setup_statusline(tmp_path, monkeypatch)
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("CPOOL_STATUSLINE_NEXT", "echo mine")
+    config.save_account(config.Account("b", tmp_path / "b", 2))
+    _render(monkeypatch, {})
+    assert capsys.readouterr().out.splitlines() == ["mine", "● a  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –",
+                                                     "○ b  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –"]
 
 
 def _leave_setup(tmp_path, monkeypatch, other):

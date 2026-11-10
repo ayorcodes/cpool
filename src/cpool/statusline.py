@@ -1,4 +1,4 @@
-"""Statusline wrapper: payload on stdin -> state.json, then chain to the user's own statusline."""
+"""Record stdin usage, then display the user's chained statusline and all enabled accounts."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-from . import accounts, config, journal, state
+from . import accounts, config, journal, render, state
 
 
 def _ancestor_claude_pid() -> int:
@@ -111,26 +111,15 @@ def _record(payload: dict) -> str | None:
     return acct.name
 
 
-def _until(resets_at: int | None, now: int) -> str:
-    """Compact time to a reset: 45m, 2h13m, 3d4h. Empty when unknown or already past."""
-    if resets_at is None or resets_at <= now:
-        return ""
-    m = (resets_at - now) // 60
-    if m < 60:
-        return f" ↻{m}m"
-    h, m = divmod(m, 60)
-    if h < 24:
-        return f" ↻{h}h{m:02d}m"
-    d, h = divmod(h, 24)
-    return f" ↻{d}d{h}h"
-
-
 def _compact(payload: dict, name: str | None) -> str:
     now = int(time.time())
 
     def pct(key):
         w = _window(payload, key)
-        return f"{w['used']:.0f}%{_until(w['resets_at'], now)}" if w else "?"
+        if not w:
+            return "?"
+        reset = render.until(w["resets_at"], now)
+        return f"{w['used']:.0f}%" + (f" {reset}" if reset else "")
     return f"cpool:{name or '?'} 5h {pct('five_hour')} 7d {pct('seven_day')}"
 
 
@@ -147,13 +136,26 @@ def main() -> int:
         name = _record(payload)
     except Exception as e:  # noqa: BLE001
         journal.log("error", where="statusline", error=type(e).__name__, detail=str(e)[:200])
+    try:
+        cfg = config.load()
+        st = state.read()
+        active = accounts.resolve_account(cfg, os.environ.get("CLAUDE_CONFIG_DIR"))
+        lines = render.account_lines(cfg, st, active.name if active else None, int(time.time()),
+                                     color=render.color_enabled())
+        if not lines:
+            lines = [_compact(payload, name)]
+    except Exception as e:  # noqa: BLE001
+        journal.log("error", where="statusline.render", error=type(e).__name__, detail=str(e)[:200])
+        lines = [_compact(payload, name)]
     nxt = os.environ.get("CPOOL_STATUSLINE_NEXT")
     if nxt:
         try:
             r = subprocess.run(["/bin/sh", "-c", nxt], input=raw, capture_output=True, timeout=2)
-            sys.stdout.write(r.stdout.decode(errors="replace"))
-            return 0
+            chained = r.stdout.decode(errors="replace").rstrip("\n")
+            if chained:
+                print(chained)
         except (OSError, subprocess.SubprocessError) as e:
             journal.log("error", where="statusline.chain", error=type(e).__name__)
-    print(_compact(payload, name))
+    for line in lines:
+        print(line)
     return 0
