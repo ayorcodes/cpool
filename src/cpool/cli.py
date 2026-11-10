@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import accounts, advisor, config, journal, launchd, mirror, router, schedule, state, usage, warm
+from . import accounts, advisor, config, journal, launchd, mirror, render, router, schedule, state, usage, warm
 
 
 class CliError(Exception):
@@ -140,11 +140,6 @@ def _rows(cfg: config.Config, st: dict, now: int) -> list[dict]:
     return rows
 
 
-def _pct(w: dict, fmt: str) -> str:
-    reset = "-" if w["resets_at"] is None else datetime.fromtimestamp(w["resets_at"]).strftime(fmt)
-    return f"{w['used']:.0f}% {reset}"
-
-
 def _cmd_list() -> int:
     for a in config.load().accounts:
         print(f"{a.name}\t{a.dir or 'default'}\torder={a.order}\t{'enabled' if a.enabled else 'disabled'}")
@@ -160,16 +155,30 @@ def _cmd_status(as_json: bool) -> int:
     if as_json:
         print(json.dumps({"accounts": rows, "next": {"account": dec.account, "reason": dec.reason}}, indent=2))
         return 0
+    color = render.color_enabled(sys.stdout)
+    active = accounts.resolve_account(cfg, os.environ.get("CLAUDE_CONFIG_DIR"))
+    name_width = max((len(r["name"]) for r in rows), default=0)
+    stored = st.get("accounts") or {}
+    lines, plains, extras = [], [], []
     for r in rows:
-        mw = " ".join(f"{f}:{_pct(w, '%a %H:%M')}" for f, w in r["model_week"].items())
-        print(
-            f"{r['name']:<10} {r['tier']:<7} 5h {_pct(r['five_hour'], '%H:%M'):<10} "
-            f"7d {_pct(r['seven_day'], '%a %H:%M'):<14}"
-            + (f" {mw}" if mw else "")
-            + f" credits={r['credits']} auth={r['auth']} sessions={r['sessions']}"
-            f" [{r['source']} {r['age']}]"
-        )
-    print(f"next: {dec.account or 'none'} ({dec.reason})")
+        acct = stored.get(r["name"]) or {}
+        is_active = active is not None and r["name"] == active.name
+        lines.append(render.account_line(r["name"], acct, now, active=is_active, name_width=name_width, color=color))
+        plains.append(render.account_line(r["name"], acct, now, active=is_active, name_width=name_width, color=False))
+        age = "just now" if r["age"] == "0m" else f"{r['age']} ago"
+        seen = "no data" if r["source"] == "-" else f"{r['source']} {age}"
+        mw = "  ".join(f"{f} {w['used']:.0f}% {render.until(w['resets_at'], now)}".rstrip()
+                       for f, w in r["model_week"].items())
+        credits = "credits on" if r["credits"] == "ON" else ""
+        sessions = f"{r['sessions']} session" + ("" if r["sessions"] == 1 else "s") if r["sessions"] else ""
+        extras.append([r["tier"], sessions, seen, mw, credits])
+    widths = [max((len(e[i]) for e in extras), default=0) for i in range(5)]
+    gutter = max((len(p) for p in plains), default=0) + 3
+    for line, plain, cols in zip(lines, plains, extras):
+        tail = "  ".join(f"{c:<{w}}" for c, w in zip(cols, widths) if w).rstrip()
+        print(line + " " * (gutter - len(plain)) + render.paint(tail, render.DIM, on=color))
+    pick = render.paint(dec.account or "none", render.BOLD, on=color and dec.account is not None)
+    print(render.paint("→ next:", render.DIM, on=color) + f" {pick} " + render.paint(f"({dec.reason})", render.DIM, on=color))
     return 0
 
 

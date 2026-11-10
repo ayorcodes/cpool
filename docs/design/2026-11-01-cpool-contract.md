@@ -37,7 +37,7 @@ Skeleton (wave 0b) implements `paths`, `config`, `state`, `journal` fully and st
 | `CLAUDE_CONFIG_DIR` | `run`, `warm` | the account's `dir` launch string, ~-expanded, no trailing `/` (Keychain hash is of this exact string); unset for `dir = "default"` |
 | `CPOOL_ACCOUNT` | `run` | account name, for the mod and statusline |
 | `CPOOL_RUN` | `run` | uuid4 for one `cpool run` invocation; stable across relaunches; keys the handoff file |
-| `CPOOL_STATUSLINE_NEXT` | `add`/`doctor` writes into shared settings | the user's original statusline command, chained after ours |
+| `CPOOL_STATUSLINE_NEXT` | `add`/`doctor` writes into shared settings | the user's original statusline command; prints its output, then cpool's account rows |
 
 ## `~/.cpool/config.toml`
 
@@ -150,7 +150,7 @@ def token(acct: Account) -> str | None   # read-only Keychain read; never logged
 def fetch(acct: Account) -> dict          # normalized to the state.accounts[name] shape; raises UsageError(status)
 def poll(cfg: Config, now: int) -> None   # skips accounts with a live session or in backoff
 # statusline.py
-def main() -> int                         # stdin → state; then exec CPOOL_STATUSLINE_NEXT with the same stdin; prints its output
+def main() -> int                         # stdin → state; runs CPOOL_STATUSLINE_NEXT with the same stdin; prints its output, then cpool's account rows
 # schedule.py
 @dataclass(frozen=True) class WarmSlot: account: str; hour: int; minute: int
 def plan(cfg: Config) -> list[WarmSlot]

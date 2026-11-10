@@ -56,6 +56,31 @@ def test_status_json_reads_state(tmp_path, monkeypatch, capsys):
     assert rows["claude2"]["seven_day"]["used"] == 5.0
 
 
+def test_status_text_lists_accounts_without_ansi_when_piped(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr(cli.time, "time", lambda: 1000)
+    (tmp_path / "config.toml").write_text(
+        '[[account]]\nname = "main"\ndir = "default"\norder = 1\n\n'
+        '[[account]]\nname = "other"\ndir = "~/other"\norder = 2\n'
+    )
+    (tmp_path / "state.json").write_text(json.dumps({"accounts": {
+        "main": {"five_hour": {"used": 42, "resets_at": 4600},
+                 "seven_day": {"used": 11, "resets_at": 87400},
+                 "credits_enabled": False, "auth": "ok", "updated_at": 1000}
+    }}))
+    assert cli.main(["status"]) == 0
+    output = capsys.readouterr().out
+    lines = output.splitlines()
+    assert "\x1b" not in output
+    assert len(lines) == 3
+    assert lines[0].startswith("● main   5h ▰▰▰▱▱▱▱▱  42% ↻1h00m  7d ▰▱▱▱▱▱▱▱  11% ↻1d0h   ?  no data")
+    assert lines[1].startswith("○ other  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –")
+    assert "credits" not in lines[0]
+    assert lines[-1] == "→ next: main (best)"
+
+
 def test_switch_and_status_ignore_dead_sessions(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
