@@ -6,6 +6,7 @@ from typing import Literal, TextIO
 
 from . import router
 from .config import Config
+from .codex import Snapshot
 
 FULL = "▰"
 EMPTY = "▱"
@@ -64,15 +65,45 @@ def until(resets_at: int | None, now: int) -> str:
 
 
 def window_cell(acct: dict, key: str, now: int, *, color: bool) -> str:
-    label = WINDOW_LABELS[key]
-    if not acct:
+    used, resets_at = router.win(acct, key, now) if acct else (None, None)
+    return usage_cell(WINDOW_LABELS[key], used, resets_at, now, color=color)
+
+
+def usage_cell(label: str, used: float | None, resets_at: int | None, now: int, *, color: bool) -> str:
+    if used is None:
         return f"{label} {paint(EMPTY * BAR_WIDTH, DIM, on=color)} {UNKNOWN:>4} {'':<{RESET_WIDTH}}"
-    used, resets_at = router.win(acct, key, now)
     used = max(0.0, min(100.0, used))
     sgr = (PALETTE[level(used)], BOLD) if used >= HOT_BOLD_AT else (PALETTE[level(used)],)
     usage = paint(f"{bar(used)} {used:>3.0f}%", *sgr, on=color)
     reset = until(resets_at, now)
     return f"{label} {usage} " + paint(reset, DIM, on=color and bool(reset)) + " " * (RESET_WIDTH - len(reset))
+
+
+def window_label(minutes: int) -> str:
+    if minutes % 1440 == 0:
+        return f"{minutes // 1440}d"
+    if minutes % 60 == 0:
+        return f"{minutes // 60}h"
+    return f"{minutes}m"
+
+
+def codex_line(snap: Snapshot, now: int, *, name_width: int, color: bool) -> str:
+    cells = []
+    for minutes, used, resets_at in snap["windows"]:
+        if resets_at is None or resets_at <= now:
+            used, resets_at = 0.0, None
+        cells.append(usage_cell(window_label(minutes), used, resets_at, now, color=color))
+    if not cells:
+        cells = [usage_cell(label, None, None, now, color=color) for label in ("5h", "7d")]
+    marker = paint(INACTIVE, DIM, on=color)
+    row = f"{marker} {'codex':<{name_width}}{SEPARATOR}" + SEPARATOR.join(cells)
+    suffix = f" {snap['plan'] or '?'}"
+    ts = snap["ts"]
+    if ts is not None and now - ts > 3600:
+        age = int(now - ts)
+        value, unit = (age // 86400, "d") if age >= 86400 else (age // 3600, "h")
+        suffix += f" · {value}{unit} ago"
+    return row + paint(suffix, DIM, on=color)
 
 
 def account_line(name: str, acct: dict, now: int, *, active: bool, name_width: int, color: bool) -> str:
@@ -87,9 +118,10 @@ def account_line(name: str, acct: dict, now: int, *, active: bool, name_width: i
     return row.rstrip()
 
 
-def account_lines(cfg: Config, st: dict, active: str | None, now: int, *, color: bool) -> list[str]:
+def account_lines(cfg: Config, st: dict, active: str | None, now: int, *, color: bool,
+                  min_width: int = 0) -> list[str]:
     enabled = [a for a in cfg.accounts if a.enabled]
-    width = max((len(a.name) for a in enabled), default=0)
+    width = max(min_width, max((len(a.name) for a in enabled), default=0))
     stored = st.get("accounts") or {}
     return [account_line(a.name, stored.get(a.name) or {}, now, active=a.name == active,
                          name_width=width, color=color) for a in enabled]
