@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-from . import accounts, config, journal, render, state
+from . import accounts, codex, config, journal, render, state
 
 
 def _ancestor_claude_pid() -> int:
@@ -140,8 +140,14 @@ def main() -> int:
         cfg = config.load()
         st = state.read()
         active = accounts.resolve_account(cfg, os.environ.get("CLAUDE_CONFIG_DIR"))
-        lines = render.account_lines(cfg, st, active.name if active else None, int(time.time()),
-                                     color=render.color_enabled())
+        now = int(time.time())
+        color = render.color_enabled()
+        snap = codex.snapshot(now) if any(a.enabled for a in cfg.accounts) else None
+        lines = render.account_lines(cfg, st, active.name if active else None, now,
+                                     color=color, min_width=len("codex") if snap is not None else 0)
+        if lines and snap is not None:
+            name_width = max(len("codex"), max(len(a.name) for a in cfg.accounts if a.enabled))
+            lines.append(render.codex_line(snap, now, name_width=name_width, color=color))
         if not lines:
             lines = [_compact(payload, name)]
     except Exception as e:  # noqa: BLE001

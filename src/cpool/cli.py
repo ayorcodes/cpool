@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import accounts, advisor, config, journal, launchd, mirror, render, router, schedule, state, usage, warm
+from . import accounts, advisor, codex, config, journal, launchd, mirror, render, router, schedule, state, usage, warm
 
 
 class CliError(Exception):
@@ -152,12 +152,15 @@ def _cmd_status(as_json: bool) -> int:
     now = int(time.time())
     rows = _rows(cfg, st, now)
     dec = router.choose(st, cfg, model="", cwd=os.getcwd(), now=now)
+    snap = codex.snapshot(now)
     if as_json:
-        print(json.dumps({"accounts": rows, "next": {"account": dec.account, "reason": dec.reason}}, indent=2))
+        print(json.dumps({"accounts": rows, "codex": snap,
+                          "next": {"account": dec.account, "reason": dec.reason}}, indent=2))
         return 0
     color = render.color_enabled(sys.stdout)
     active = accounts.resolve_account(cfg, os.environ.get("CLAUDE_CONFIG_DIR"))
-    name_width = max((len(r["name"]) for r in rows), default=0)
+    name_width = max(len("codex") if snap is not None else 0,
+                     max((len(r["name"]) for r in rows), default=0))
     stored = st.get("accounts") or {}
     lines, plains, extras = [], [], []
     for r in rows:
@@ -177,6 +180,8 @@ def _cmd_status(as_json: bool) -> int:
     for line, plain, cols in zip(lines, plains, extras):
         tail = "  ".join(f"{c:<{w}}" for c, w in zip(cols, widths) if w).rstrip()
         print(line + " " * (gutter - len(plain)) + render.paint(tail, render.DIM, on=color))
+    if snap is not None:
+        print(render.codex_line(snap, now, name_width=name_width, color=color))
     pick = render.paint(dec.account or "none", render.BOLD, on=color and dec.account is not None)
     print(render.paint("→ next:", render.DIM, on=color) + f" {pick} " + render.paint(f"({dec.reason})", render.DIM, on=color))
     return 0

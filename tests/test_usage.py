@@ -50,6 +50,7 @@ def test_poll_429_backs_off_and_keeps_usage(tmp_path, monkeypatch):
 
 def _setup_statusline(tmp_path, monkeypatch, now=1_000_000):
     monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "acct"))
     monkeypatch.setenv("CPOOL_RUN", "run-1")
     monkeypatch.delenv("CPOOL_STATUSLINE_NEXT", raising=False)

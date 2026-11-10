@@ -58,6 +58,7 @@ def test_status_json_reads_state(tmp_path, monkeypatch, capsys):
 
 def test_status_text_lists_accounts_without_ansi_when_piped(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setattr(cli.time, "time", lambda: 1000)

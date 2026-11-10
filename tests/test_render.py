@@ -42,3 +42,23 @@ def test_plain_account_rows_preserve_active_auth_and_expired_windows(monkeypatch
     assert inactive == "○ a  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –"
     assert "\x1b" not in active + inactive
     assert "↻" not in active
+
+
+@pytest.mark.parametrize("minutes, expected", [(300, "5h"), (10080, "7d"), (43200, "30d"),
+                                               (90, "90m"), (45, "45m")])
+def test_codex_window_labels(minutes, expected):
+    assert render.window_label(minutes) == expected
+
+
+@pytest.mark.parametrize("snap, now, expected", [
+    ({"plan": "plus", "windows": [(300, 25, 3600), (10080, 42, 86400)], "ts": 0}, 0,
+     "○ codex  5h ▰▰▱▱▱▱▱▱  25% ↻1h00m  7d ▰▰▰▱▱▱▱▱  42% ↻1d0h  plus"),
+    ({"plan": "free", "windows": [(43200, 10, 3600)], "ts": 0}, 0,
+     "○ codex  30d ▰▱▱▱▱▱▱▱  10% ↻1h00m free"),
+    ({"plan": "plus", "windows": [(300, 80, 99)], "ts": 0}, 7200,
+     "○ codex  5h ▱▱▱▱▱▱▱▱   0%        plus · 2h ago"),
+    ({"plan": "plus", "windows": [], "ts": None}, 0,
+     "○ codex  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –        plus"),
+])
+def test_plain_codex_rows(snap, now, expected):
+    assert render.codex_line(snap, now, name_width=5, color=False) == expected
