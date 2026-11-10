@@ -111,10 +111,26 @@ def _record(payload: dict) -> str | None:
     return acct.name
 
 
+def _until(resets_at: int | None, now: int) -> str:
+    """Compact time to a reset: 45m, 2h13m, 3d4h. Empty when unknown or already past."""
+    if resets_at is None or resets_at <= now:
+        return ""
+    m = (resets_at - now) // 60
+    if m < 60:
+        return f" ↻{m}m"
+    h, m = divmod(m, 60)
+    if h < 24:
+        return f" ↻{h}h{m:02d}m"
+    d, h = divmod(h, 24)
+    return f" ↻{d}d{h}h"
+
+
 def _compact(payload: dict, name: str | None) -> str:
+    now = int(time.time())
+
     def pct(key):
         w = _window(payload, key)
-        return f"{w['used']:.0f}%" if w else "?"
+        return f"{w['used']:.0f}%{_until(w['resets_at'], now)}" if w else "?"
     return f"cpool:{name or '?'} 5h {pct('five_hour')} 7d {pct('seven_day')}"
 
 
