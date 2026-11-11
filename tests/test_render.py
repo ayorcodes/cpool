@@ -38,8 +38,8 @@ def test_plain_account_rows_preserve_active_auth_and_expired_windows(monkeypatch
     acct = {"five_hour": {"used": 80, "resets_at": 99}, "auth": "expired"}
     active = render.account_line("a", acct, 100, active=True, name_width=1, color=False)
     inactive = render.account_line("a", {}, 100, active=False, name_width=1, color=False)
-    assert active == "● a  5h ▱▱▱▱▱▱▱▱   0%         7d ▱▱▱▱▱▱▱▱   0%        ⚠ expired"
-    assert inactive == "○ a  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –"
+    assert active == "▸ a  5h ▱▱▱▱▱▱▱▱   0%         7d ▱▱▱▱▱▱▱▱   0%        ⚠ expired"
+    assert inactive == "  a  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –"
     assert "\x1b" not in active + inactive
     assert "↻" not in active
 
@@ -52,13 +52,13 @@ def test_codex_window_labels(minutes, expected):
 
 @pytest.mark.parametrize("snap, now, expected", [
     ({"plan": "plus", "windows": [(300, 25, 3600), (10080, 42, 86400)], "ts": 0}, 0,
-     "○ codex  5h ▰▰▱▱▱▱▱▱  25% ↻1h00m  7d ▰▰▰▱▱▱▱▱  42% ↻1d0h  plus"),
+     "  codex  5h ▰▰▱▱▱▱▱▱  25% ↻1h00m  7d ▰▰▰▱▱▱▱▱  42% ↻1d0h  plus"),
     ({"plan": "free", "windows": [(43200, 10, 3600)], "ts": 0}, 0,
-     "○ codex  30d ▰▱▱▱▱▱▱▱  10% ↻1h00m free"),
+     "  codex  30d ▰▱▱▱▱▱▱▱  10% ↻1h00m free"),
     ({"plan": "plus", "windows": [(300, 80, 99)], "ts": 0}, 7200,
-     "○ codex  5h ▱▱▱▱▱▱▱▱   0%        plus · 2h ago"),
+     "  codex  5h ▱▱▱▱▱▱▱▱   0%        plus · 2h ago"),
     ({"plan": "plus", "windows": [], "ts": None}, 0,
-     "○ codex  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –        plus"),
+     "  codex  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –        plus"),
 ])
 def test_plain_codex_rows(snap, now, expected):
     assert render.codex_line(snap, now, name_width=5, color=False) == expected

@@ -1,5 +1,6 @@
 """Local rollout/auth decoding must not silently show usage from the wrong plan."""
 import base64
+import io
 import json
 import os
 
@@ -85,3 +86,22 @@ def test_newest_days_across_calendar_boundaries(home):
     newest = rollout(home, "2026/02/02/rollout-new.jsonl", mtime=400)
     assert codex.newest_rollouts(home, limit=3) == [newest, february, january]
     assert oldest not in codex.newest_rollouts(home, limit=3)
+
+
+def test_fetch_usage_decodes_response_and_caches_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path / "cp"))
+    (tmp_path / "auth.json").write_text(json.dumps({"tokens": {"access_token": "t"}}))
+    body = {"plan_type": "plus", "rate_limit": {"primary_window": {
+        "used_percent": 5, "limit_window_seconds": 18000, "reset_at": 99}}}
+    monkeypatch.setattr(codex.urllib.request, "urlopen",
+                        lambda *a, **k: io.BytesIO(json.dumps(body).encode()))
+
+    snap = codex.fetch_usage(tmp_path, None, 1000)
+    assert snap["plan"] == "plus"
+    assert snap["windows"] == [(300, 5.0, 99)]
+
+    def boom(*a, **k):
+        raise OSError("network unavailable")
+
+    monkeypatch.setattr(codex.urllib.request, "urlopen", boom)
+    assert codex.fetch_usage(tmp_path, None, 1010) == snap
