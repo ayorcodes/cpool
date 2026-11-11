@@ -76,8 +76,8 @@ def test_status_text_lists_accounts_without_ansi_when_piped(tmp_path, monkeypatc
     lines = output.splitlines()
     assert "\x1b" not in output
     assert len(lines) == 3
-    assert lines[0].startswith("● main   5h ▰▰▰▱▱▱▱▱  42% ↻1h00m  7d ▰▱▱▱▱▱▱▱  11% ↻1d0h   ?  no data")
-    assert lines[1].startswith("○ other  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –")
+    assert lines[0].startswith("▸ main   5h ▰▰▰▱▱▱▱▱  42% ↻1h00m  7d ▰▱▱▱▱▱▱▱  11% ↻1d0h   ?  no data")
+    assert lines[1].startswith("  other  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –")
     assert "credits" not in lines[0]
     assert lines[-1] == "→ next: main (best)"
 

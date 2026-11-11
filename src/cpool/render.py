@@ -10,8 +10,8 @@ from .codex import Snapshot
 
 FULL = "▰"
 EMPTY = "▱"
-ACTIVE = "●"
-INACTIVE = "○"
+ACTIVE = "▸"
+INACTIVE = " "
 UNKNOWN = "–"
 WARNING = "⚠"
 RESET = "↻"
