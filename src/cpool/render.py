@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from typing import Literal, TextIO
 
-from . import router
+from . import router, shardacct, state
 from .config import Config
 from .codex import Snapshot
 
@@ -96,7 +96,7 @@ def codex_line(snap: Snapshot, now: int, *, name_width: int, color: bool) -> str
     if not cells:
         cells = [usage_cell(label, None, None, now, color=color) for label in ("5h", "7d")]
     marker = paint(INACTIVE, DIM, on=color)
-    row = f"{marker} {'codex':<{name_width}}{SEPARATOR}" + SEPARATOR.join(cells)
+    row = f"{marker} {'codex':<{name_width}}{SEPARATOR}{'':<12}{SEPARATOR}" + SEPARATOR.join(cells)
     suffix = f" {snap['plan'] or '?'}"
     ts = snap["ts"]
     if ts is not None and now - ts > 3600:
@@ -106,22 +106,52 @@ def codex_line(snap: Snapshot, now: int, *, name_width: int, color: bool) -> str
     return row + paint(suffix, DIM, on=color)
 
 
-def account_line(name: str, acct: dict, now: int, *, active: bool, name_width: int, color: bool) -> str:
+def shard_header(cfg: Config, st: dict, now: int) -> tuple[str | None, set[str]]:
+    count = len({s.get("pid") for s in (st.get("sessions") or {}).values()
+                 if s.get("shard") is True and state.pid_alive(s.get("pid"))})
+    if os.environ.get("CPOOL_SHARD") != "1" and not count:
+        return None, set()
+    _, serving = shardacct.serving(cfg, st, now)
+    _, unmatched = shardacct.live_by_account(cfg, st, now)
+    labels = " ".join(f"{name}×{number}" for name, number in sorted(unmatched.items(), key=lambda item: (-item[1], item[0])))
+    return f"⇄ shard {count}" + (f" · {labels}" if labels else ""), serving
+
+
+def account_line(name: str, acct: dict, now: int, *, active: bool, name_width: int, color: bool,
+                 serving: set[str] | None = None, live: int = 0, stale_after_s: int = 180) -> str:
+    if os.environ.get("CPOOL_SHARD") == "1":
+        active = serving is not None and name in serving
     auth = acct.get("auth")
     muted = auth in AUTH_WARNINGS
     marker = paint(ACTIVE if active else INACTIVE, ACTIVE_COLOR if active else DIM, on=color and not muted)
     title = paint(f"{name:<{name_width}}", BOLD, ACTIVE_COLOR, on=color and active and not muted)
     cells = [window_cell(acct, key, now, color=color and not muted) for key in WINDOW_LABELS]
-    row = f"{marker} {title}{SEPARATOR}" + SEPARATOR.join(cells)
+    glyphs = "●" * min(live, 4) if live else "·"
+    if live > 4:
+        glyphs += f"+{live - 4}"
+    sessions = paint(f"{glyphs:<8}", ACTIVE_COLOR if active else DIM, on=color) + f" {live:>3}"
+    row = f"{marker} {title}{SEPARATOR}{sessions}{SEPARATOR}" + SEPARATOR.join(cells)
+    ts = acct.get("updated_at")
+    if stale_after_s and ts is not None and now - ts > stale_after_s:
+        age = int(now - ts)
+        value, unit = ((age // 86400, "d") if age >= 86400 else
+                       (age // 3600, "h") if age >= 3600 else (age // 60, "m"))
+        row = row.rstrip() + paint(f" · {value}{unit} ago", DIM, on=color)
     if muted:
         return paint(row, DIM, on=color) + paint(f" {WARNING} {auth}", PALETTE["warn"], on=color)
     return row.rstrip()
 
 
 def account_lines(cfg: Config, st: dict, active: str | None, now: int, *, color: bool,
-                  min_width: int = 0) -> list[str]:
-    enabled = [a for a in cfg.accounts if a.enabled]
+                  min_width: int = 0, serving: set[str] | None = None) -> list[str]:
+    live, _ = shardacct.live_by_account(cfg, st, now)
+    enabled = [a for a in cfg.accounts if a.enabled or live[a.name]]
     width = max(min_width, max((len(a.name) for a in enabled), default=0))
     stored = st.get("accounts") or {}
-    return [account_line(a.name, stored.get(a.name) or {}, now, active=a.name == active,
-                         name_width=width, color=color) for a in enabled]
+    header, selected = shard_header(cfg, st, now)
+    serving = selected if header is not None and serving is None else serving
+    lines = [header] if header is not None else []
+    lines.extend(account_line(a.name, stored.get(a.name) or {}, now, active=a.name == active,
+                              name_width=width, color=color, serving=serving, live=live[a.name],
+                              stale_after_s=3 * cfg.pool.live_poll_s) for a in enabled)
+    return lines

@@ -6,7 +6,7 @@ import os
 import re
 import tempfile
 import tomllib
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 from . import paths
@@ -31,12 +31,16 @@ class Pool:
     soft: float = 85
     projected: float = 97
     weekly_soft: float = 90
-    expiry_h: float = 36
+    burn_h: float = 5
+    duty: float = 0.4
+    reset_weight: float = 40
     expiry_weight: float = 100
     margin: float = 10
     cooldown_min: int = 5
     stale_min: int = 20
     poll_min: int = 10
+    live_poll_s: int = 60
+    statusline_refresh_s: int = 15
     jitter_s: tuple[int, int] = (5, 15)
     ctx_max_uncompacted: float = 30
 
@@ -53,10 +57,17 @@ class Advisor:
 
 
 @dataclass(frozen=True)
+class Shard:
+    enabled: bool = False
+    url: str = "http://127.0.0.1:8317"
+
+
+@dataclass(frozen=True)
 class Config:
     pool: Pool
     accounts: tuple[Account, ...]
     advisor: Advisor = field(default_factory=Advisor)
+    shard: Shard = field(default_factory=Shard)
 
 
 _NAME_RE = re.compile(r"[a-z0-9-]+")
@@ -89,7 +100,16 @@ def _parse_pool(raw: dict) -> Pool:
     for k, v in kw.items():
         if k != "jitter_s" and (isinstance(v, bool) or not isinstance(v, (int, float))):
             raise ConfigError(f"pool.{k} must be a number")
-    return Pool(**kw)
+    for key, floor in (("live_poll_s", 30), ("statusline_refresh_s", 1)):
+        value = kw.get(key, getattr(Pool, key))
+        if not isinstance(value, int) or isinstance(value, bool) or (value != 0 and value < floor):
+            raise ConfigError(f"pool.{key} must be 0 or an integer >= {floor}")
+    pool = Pool(**kw)
+    if not pool.burn_h > 0:
+        raise ConfigError("pool.burn_h must be > 0")
+    if not 0 < pool.duty <= 1:
+        raise ConfigError("pool.duty must be > 0 and <= 1")
+    return pool
 
 
 _EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -132,6 +152,21 @@ def _parse_advisor(raw: dict) -> Advisor:
         max_rounds=num("max_rounds", 1, 6),
         max_attach_bytes=num("max_attach_bytes", 1, 10**10),
     )
+
+
+def _parse_shard(raw: dict) -> Shard:
+    if not isinstance(raw, dict):
+        raise ConfigError("[shard] must be a table")
+    unknown = set(raw) - {f.name for f in fields(Shard)}
+    if unknown:
+        raise ConfigError(f"unknown [shard] keys: {', '.join(sorted(unknown))}")
+    enabled = raw.get("enabled", Shard.enabled)
+    if not isinstance(enabled, bool):
+        raise ConfigError("shard.enabled must be a boolean")
+    url = raw.get("url", Shard.url)
+    if not isinstance(url, str):
+        raise ConfigError("shard.url must be a string")
+    return Shard(enabled, url)
 
 
 def _parse_account(raw: dict, idx: int) -> Account:
@@ -191,7 +226,8 @@ def load(path: Path | None = None) -> Config:
         raise ConfigError("[[account]] must be an array of tables")
     accounts = [_parse_account(r, i) for i, r in enumerate(raw_accts)]
     _validate(accounts)
-    return Config(pool, tuple(accounts), _parse_advisor(data.get("advisor", {})))
+    return Config(pool, tuple(accounts), _parse_advisor(data.get("advisor", {})),
+                  _parse_shard(data.get("shard", {})))
 
 
 def _q(s: str) -> str:
@@ -221,6 +257,8 @@ def _dump(cfg: Config) -> str:
             out.append(f"capacity = {_val(a.capacity)}")
     if cfg.advisor != Advisor():  # keep a user's [advisor] section across account writes
         out += ["", "[advisor]"] + [f"{f.name} = {_val(getattr(cfg.advisor, f.name))}" for f in fields(Advisor)]
+    if cfg.shard != Shard():
+        out += ["", "[shard]"] + [f"{f.name} = {_val(getattr(cfg.shard, f.name))}" for f in fields(Shard)]
     return "\n".join(out) + "\n"
 
 
@@ -249,6 +287,15 @@ def _lock() -> int:
     return fd
 
 
+def save_shard(shard: Shard) -> None:
+    fd = _lock()
+    try:
+        cfg = load()
+        _write_atomic(paths.config_path(), _dump(replace(cfg, shard=shard)))
+    finally:
+        os.close(fd)
+
+
 def save_account(acct: Account) -> None:
     fd = _lock()
     try:
@@ -261,7 +308,7 @@ def save_account(acct: Account) -> None:
         else:
             accounts.append(acct)
         _validate(accounts)
-        _write_atomic(paths.config_path(), _dump(Config(cfg.pool, tuple(accounts), cfg.advisor)))
+        _write_atomic(paths.config_path(), _dump(replace(cfg, accounts=tuple(accounts))))
     finally:
         os.close(fd)
 
@@ -273,6 +320,6 @@ def remove_account(name: str) -> None:
         accounts = [a for a in cfg.accounts if a.name != name]
         if len(accounts) == len(cfg.accounts):
             raise ConfigError(f"no such account: {name}")
-        _write_atomic(paths.config_path(), _dump(Config(cfg.pool, tuple(accounts), cfg.advisor)))
+        _write_atomic(paths.config_path(), _dump(replace(cfg, accounts=tuple(accounts))))
     finally:
         os.close(fd)

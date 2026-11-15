@@ -2,16 +2,19 @@
 never logged, written, refreshed or put in an exception message."""
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import http.client
 import json
+import shlex
 import subprocess
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 
-from . import __version__, accounts, journal, state
+from . import __version__, accounts, journal, paths, state
 from .config import Account, Config
 
 URL = "https://api.anthropic.com/api/oauth/usage"
@@ -20,9 +23,10 @@ BACKOFF_MAX_S = 7200
 
 
 class UsageError(Exception):
-    def __init__(self, status: int | None = None, message: str = "") -> None:
+    def __init__(self, status: int | None = None, message: str = "", *, retry_after: float = 0) -> None:
         super().__init__(message or f"usage error (status {status})")
         self.status = status
+        self.retry_after = retry_after
 
 
 class CredentialsMissing(UsageError):
@@ -50,6 +54,17 @@ def token(acct: Account) -> str | None:
     oauth = _oauth(acct)
     tok = oauth.get("accessToken") if oauth else None
     return tok if isinstance(tok, str) and tok else None
+
+
+def _subscription(oauth: dict | None) -> bool | None:
+    if oauth is None or "subscriptionType" not in oauth:
+        return None
+    subscription = oauth["subscriptionType"]
+    return isinstance(subscription, str) and bool(subscription.strip()) and subscription.strip().lower() != "free"
+
+
+def has_subscription(acct: Account) -> bool | None:
+    return _subscription(_oauth(acct))
 
 
 def tier(acct: Account) -> str | None:
@@ -99,6 +114,8 @@ def normalize(body: dict, now: int, tier: str | None = None) -> dict:
 
 def fetch(acct: Account) -> dict:
     oauth = _oauth(acct)
+    if _subscription(oauth) is False:
+        raise UsageError(403, "no subscription")
     tok = oauth.get("accessToken") if oauth else None
     if not isinstance(tok, str) or not tok:
         raise CredentialsMissing()
@@ -116,7 +133,17 @@ def fetch(acct: Account) -> dict:
         with urllib.request.urlopen(req, timeout=10) as resp:
             body = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        raise UsageError(e.code) from None
+        retry_after = 0
+        header = e.headers.get("Retry-After") if e.code == 429 and e.headers else None
+        if header:
+            try:
+                retry_after = max(0, int(header))
+            except ValueError:
+                try:
+                    retry_after = max(0, parsedate_to_datetime(header).timestamp() - time.time())
+                except (ValueError, TypeError, OverflowError):
+                    pass
+        raise UsageError(e.code, retry_after=retry_after) from None
     except (urllib.error.URLError, http.client.HTTPException, OSError):
         raise UsageError(None, "network error") from None
     except ValueError:
@@ -146,18 +173,62 @@ def _skip(st: dict, acct: Account, now: int) -> str | None:
         fp = a.get("token_fp")
         if fp is None or fp == _fingerprint(acct):
             return "backoff"
-    for s in st.get("sessions", {}).values():
-        ts = s.get("updated_at")
-        if s.get("account") == name and isinstance(ts, (int, float)) and now - ts < FRESH_S:
-            return "live"
+    ts = a.get("updated_at")
+    if a.get("source") == "statusline" and isinstance(ts, (int, float)) and now - ts < FRESH_S:
+        return "live"
     return None
 
 
-def poll(cfg: Config, now: int) -> None:
+def poll_due(cfg: Config, st: dict, now: int) -> list[str]:
+    if cfg.pool.live_poll_s == 0:
+        return []
+    due = []
+    for acct in cfg.accounts:
+        a = st.get("accounts", {}).get(acct.name, {})
+        if not acct.enabled or a.get("auth") in {"missing", "expired", "no-plan"}:
+            continue
+        if (a.get("poll_backoff_until") or 0) > now:
+            continue
+        ts = a.get("updated_at")
+        if ts is None or now - ts >= cfg.pool.live_poll_s:
+            due.append(acct.name)
+    return due
+
+
+def kick(cfg: Config, now: int) -> bool:
+    if cfg.pool.live_poll_s == 0:
+        return False
+    from .run import _cpool_bin
+
+    try:
+        paths.home().mkdir(parents=True, exist_ok=True)
+        with (paths.home() / "poll.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            stamp = paths.home() / "poll.kicked"
+            try:
+                previous = float(stamp.read_text())
+            except (FileNotFoundError, ValueError):
+                previous = None
+            if previous is not None and 0 <= now - previous < cfg.pool.live_poll_s:
+                return False
+            stamp.write_text(str(now))
+            subprocess.Popen([*shlex.split(_cpool_bin()), "poll", "--due"],
+                             start_new_session=True, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+    except (OSError, ValueError):
+        return False
+
+
+def poll(cfg: Config, now: int, *, due: bool = False) -> None:
+    targets = set(poll_due(cfg, state.read(), now)) if due else None
     for acct in cfg.accounts:
         if not acct.enabled:
             continue
-        if _skip(state.read(), acct, now):
+        if targets is not None:
+            if acct.name not in targets:
+                continue
+        elif _skip(state.read(), acct, now):
             continue
         result, err = None, None
         try:
@@ -188,6 +259,8 @@ def poll(cfg: Config, now: int) -> None:
                 a["auth"] = "missing"
             elif status == 429:
                 _backoff(a, now, cfg.pool.poll_min * 60)
+                a["poll_backoff_s"] = max(err.retry_after, a["poll_backoff_s"])
+                a["poll_backoff_until"] = now + a["poll_backoff_s"]
                 a["token_fp"] = None
             journal.log("poll", account=acct.name, status=status, error=str(err))
 
