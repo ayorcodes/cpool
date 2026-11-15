@@ -10,6 +10,14 @@ def home() -> Path:
     return Path(env).expanduser() if env else Path.home() / ".cpool"
 
 
+def unfold_path() -> Path:
+    return home() / "unfold"
+
+
+def folded() -> bool:
+    return not unfold_path().exists()
+
+
 def config_path() -> Path:
     return home() / "config.toml"
 

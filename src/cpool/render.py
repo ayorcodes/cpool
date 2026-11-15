@@ -176,7 +176,7 @@ def account_line(name: str, acct: dict, now: int, *, active: bool, name_width: i
 
 
 def account_lines(cfg: Config, st: dict, active: str | None, now: int, *, color: bool,
-                  min_width: int = 0, serving: set[str] | None = None) -> list[str]:
+                  min_width: int = 0, serving: set[str] | None = None, folded: bool = False) -> list[str]:
     live, _ = shardacct.live_by_account(cfg, st, now)
     enabled = [a for a in cfg.accounts if a.enabled or live[a.name]]
     width = max(min_width, max((len(a.name) for a in enabled), default=0))
@@ -186,5 +186,6 @@ def account_lines(cfg: Config, st: dict, active: str | None, now: int, *, color:
     lines = [header] if header is not None else []
     lines.extend(account_line(a.name, stored.get(a.name) or {}, now, active=a.name == active,
                               name_width=width, color=color, serving=serving, live=live[a.name],
-                              stale_after_s=3 * cfg.pool.live_poll_s) for a in enabled)
+                              stale_after_s=3 * cfg.pool.live_poll_s) for a in enabled
+                 if not folded or (a.name in serving if serving is not None else a.name == active))
     return lines

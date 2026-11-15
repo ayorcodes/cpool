@@ -156,7 +156,7 @@ def test_main_dispatches_bare_and_flag_argv_to_run(monkeypatch):
     assert seen == [[], ["--model", "opus"], ["--resume", "x"]]
 
     seen.clear()
-    monkeypatch.setattr(cli, "_cmd_status", lambda as_json: 0)
+    monkeypatch.setattr(cli, "_cmd_status", lambda as_json, show_all=False: 0)
     assert cli.main(["status", "--json"]) == 0
     try:
         cli.main(["-h"])

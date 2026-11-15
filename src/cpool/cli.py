@@ -11,7 +11,7 @@ from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 
-from . import accounts, advisor, chain, codex, config, journal, launchd, mirror, render, router, schedule, shard, shardacct, state, usage, warm
+from . import accounts, advisor, chain, codex, config, journal, launchd, mirror, paths, render, router, schedule, shard, shardacct, state, usage, warm
 
 
 class CliError(Exception):
@@ -43,6 +43,10 @@ def _parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("status", help="usage per account")
     s.add_argument("--json", action="store_true")
+    s.add_argument("-a", "--all", action="store_true", help="show every account row")
+
+    sub.add_parser("fold", help="hide inactive account rows")
+    sub.add_parser("unfold", help="show every account row")
 
     s = sub.add_parser("switch", help="hand a session off at the end of its next turn")
     s.add_argument("session", nargs="?")
@@ -154,7 +158,7 @@ def _cmd_list() -> int:
     return 0
 
 
-def _cmd_status(as_json: bool) -> int:
+def _cmd_status(as_json: bool, show_all: bool) -> int:
     cfg = config.load()
     st = state.read()
     now = int(time.time())
@@ -167,6 +171,7 @@ def _cmd_status(as_json: bool) -> int:
                           "pool": asdict(outlook) if outlook is not None else None,
                           "next": {"account": dec.account, "reason": dec.reason}}, indent=2))
         return 0
+    folded = paths.folded() and not show_all
     color = render.color_enabled(sys.stdout)
     active = accounts.resolve_account(cfg, os.environ.get("CLAUDE_CONFIG_DIR"))
     name_width = max(len("codex") if snap is not None else 0,
@@ -181,6 +186,8 @@ def _cmd_status(as_json: bool) -> int:
     for r in rows:
         acct = stored.get(r["name"]) or {}
         is_active = r["name"] in serving if serving is not None else active is not None and r["name"] == active.name
+        if folded and not is_active:
+            continue
         lines.append(render.account_line(r["name"], acct, now, active=is_active, name_width=name_width, color=color, serving=serving,
                                          live=r["sessions"], stale_after_s=3 * cfg.pool.live_poll_s))
         plains.append(render.account_line(r["name"], acct, now, active=is_active, name_width=name_width, color=False, serving=serving,
@@ -197,7 +204,7 @@ def _cmd_status(as_json: bool) -> int:
     for line, plain, cols in zip(lines, plains, extras):
         tail = "  ".join(f"{c:<{w}}" for c, w in zip(cols, widths) if w).rstrip()
         print(line + " " * (gutter - len(plain)) + render.paint(tail, render.DIM, on=color))
-    if snap is not None:
+    if snap is not None and not folded:
         print(render.codex_line(snap, now, name_width=name_width, color=color))
     for line in render.pool_lines(cfg, st, now, name_width=name_width, color=color):
         print(line)
@@ -532,7 +539,15 @@ def main(argv: list[str] | None = None) -> int:
             case "list":
                 return _cmd_list()
             case "status":
-                return _cmd_status(args.json)
+                return _cmd_status(args.json, args.all)
+            case "fold":
+                paths.unfold_path().unlink(missing_ok=True)
+                print("account rows folded (cpool unfold to show them)")
+            case "unfold":
+                path = paths.unfold_path()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+                print("account rows shown (cpool fold to hide them)")
             case "switch":
                 return _cmd_switch(args.session)
             case "plan":
