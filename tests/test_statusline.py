@@ -62,12 +62,15 @@ def test_statusline_route_preserves_account_usage(tmp_path, monkeypatch, capsys,
                                "seven_day": {"used_percentage": 60, "resets_at": 87400}}}
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode())))
     assert statusline.main() == 0
+    output = capsys.readouterr().out.splitlines()
+    assert output[-1].startswith("pool ")
+    account_output = "\n".join(output[:-1]) + "\n"
     st = state.read()
     if shard:
         assert st["accounts"]["a"] == stored
         assert st["sessions"]["s1"]["shard"] is True
         assert st["sessions"]["s1"]["turns"] == []
-        assert capsys.readouterr().out == (
+        assert account_output == (
             "⇄ shard 1 · …×1\n"
             "  a  ·          0  5h ▰▰▱▱▱▱▱▱  25% ↻1h00m  7d ▰▰▰▰▱▱▱▱  50% ↻1d0h  ⚠ expired\n")
     else:
@@ -77,7 +80,7 @@ def test_statusline_route_preserves_account_usage(tmp_path, monkeypatch, capsys,
             "source": "statusline", "auth": "ok", "updated_at": 1000}
         assert not st["sessions"]["s1"].get("shard")
         assert st["sessions"]["s1"]["turns"] == [{"ts": 1000, "u5h": 30}]
-        assert capsys.readouterr().out == (
+        assert account_output == (
             "▸ a  ●          1  5h ▰▰▱▱▱▱▱▱  30% ↻1h00m  7d ▰▰▰▰▰▱▱▱  60% ↻1d0h\n")
     session = st["sessions"]["s1"]
     assert (session["account"], session["run"], session["pid"], session["cwd"], session["model"],

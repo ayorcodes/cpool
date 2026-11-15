@@ -46,7 +46,10 @@ def test_status_json_reads_state(tmp_path, monkeypatch, capsys):
     )
 
     assert cli.main(["status", "--json"]) == 0
-    rows = {r["name"]: r for r in json.loads(capsys.readouterr().out)["accounts"]}
+    result = json.loads(capsys.readouterr().out)
+    assert result["pool"]["room"] == pytest.approx(.78)
+    assert result["pool"]["total"] == 1.2
+    rows = {r["name"]: r for r in result["accounts"]}
 
     assert rows["main"]["tier"] == "Max5x"
     assert rows["main"]["five_hour"]["used"] == 42.0
@@ -75,7 +78,8 @@ def test_status_text_lists_accounts_without_ansi_when_piped(tmp_path, monkeypatc
     output = capsys.readouterr().out
     lines = output.splitlines()
     assert "\x1b" not in output
-    assert len(lines) == 3
+    assert len(lines) == 4
+    assert lines[-2].startswith("pool ")
     assert lines[0].startswith("▸ main   ·          0  5h ▰▰▰▱▱▱▱▱  42% ↻1h00m  7d ▰▱▱▱▱▱▱▱  11% ↻1d0h   ?  no data")
     assert lines[1].startswith("  other  ·          0  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –")
     assert "credits" not in lines[0]
