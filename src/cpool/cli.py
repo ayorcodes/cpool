@@ -7,10 +7,11 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from . import accounts, advisor, codex, config, journal, launchd, mirror, render, router, schedule, state, usage, warm
+from . import accounts, advisor, codex, config, journal, launchd, mirror, render, router, schedule, shard, shardacct, state, usage, warm
 
 
 class CliError(Exception):
@@ -56,11 +57,20 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("account", nargs="?")
 
     s = sub.add_parser("poll", help="refresh usage from the usage endpoint")
-    s.add_argument("--daemon", action="store_true")
+    mode = s.add_mutually_exclusive_group()
+    mode.add_argument("--daemon", action="store_true")
+    mode.add_argument("--due", action="store_true")
 
     sub.add_parser("statusline", help="statusline wrapper (reads stdin)")
     sub.add_parser("run", help="run claude on the best account: cpool run [claude args]")
     sub.add_parser("doctor", help="check the setup")
+
+    s = sub.add_parser("shard", help="route new sessions through the shard proxy")
+    sh = s.add_subparsers(dest="shard_cmd", required=True)
+    sh.add_parser("on", help="enable shard routing for new sessions")
+    sh.add_parser("off", help="disable shard routing for new sessions")
+    sh.add_parser("status", help="show shard routing and proxy availability")
+    _shard_mgmt_parser(sh)
 
     s = sub.add_parser("advise", help="ask the Fable advisor (API credits)")
     adv = s.add_subparsers(dest="advise_cmd", required=True)
@@ -115,10 +125,10 @@ def _age(updated_at, now: int) -> str:
 
 
 def _rows(cfg: config.Config, st: dict, now: int) -> list[dict]:
-    sessions = st.get("sessions") or {}
+    live, _ = shardacct.live_by_account(cfg, st, now)
     rows = []
     for a in cfg.accounts:
-        if not a.enabled:
+        if not a.enabled and not live[a.name]:
             continue
         acct = (st.get("accounts") or {}).get(a.name) or {}
         rows.append(
@@ -130,9 +140,7 @@ def _rows(cfg: config.Config, st: dict, now: int) -> list[dict]:
                 "model_week": {f: _window(w, now) for f, w in (acct.get("model_week") or {}).items() if w},
                 "credits": _credits(acct.get("credits_enabled")),
                 "auth": acct.get("auth") or "?",
-                "sessions": sum(
-                    1 for s in sessions.values() if s.get("account") == a.name and state.pid_alive(s.get("pid"))
-                ),
+                "sessions": live[a.name],
                 "source": acct.get("source") or "-",
                 "age": _age(acct.get("updated_at"), now),
             }
@@ -162,12 +170,18 @@ def _cmd_status(as_json: bool) -> int:
     name_width = max(len("codex") if snap is not None else 0,
                      max((len(r["name"]) for r in rows), default=0))
     stored = st.get("accounts") or {}
+    header, serving = render.shard_header(cfg, st, now)
+    if header is not None:
+        print(header)
+    serving = serving if header is not None else None
     lines, plains, extras = [], [], []
     for r in rows:
         acct = stored.get(r["name"]) or {}
-        is_active = active is not None and r["name"] == active.name
-        lines.append(render.account_line(r["name"], acct, now, active=is_active, name_width=name_width, color=color))
-        plains.append(render.account_line(r["name"], acct, now, active=is_active, name_width=name_width, color=False))
+        is_active = r["name"] in serving if serving is not None else active is not None and r["name"] == active.name
+        lines.append(render.account_line(r["name"], acct, now, active=is_active, name_width=name_width, color=color, serving=serving,
+                                         live=r["sessions"], stale_after_s=3 * cfg.pool.live_poll_s))
+        plains.append(render.account_line(r["name"], acct, now, active=is_active, name_width=name_width, color=False, serving=serving,
+                                          live=r["sessions"], stale_after_s=3 * cfg.pool.live_poll_s))
         age = "just now" if r["age"] == "0m" else f"{r['age']} ago"
         seen = "no data" if r["source"] == "-" else f"{r['source']} {age}"
         mw = "  ".join(f"{f} {w['used']:.0f}% {render.until(w['resets_at'], now)}".rstrip()
@@ -296,6 +310,8 @@ def _cmd_doctor() -> int:
     except config.ConfigError as e:
         out(False, f"config: {e}")
         return 1
+    if cfg.shard.enabled:
+        out(shard.probe(cfg.shard.url, shard.key()), f"shard proxy reachable: {cfg.shard.url}")
     out(shutil.which("claude") is not None, "claude on PATH")
     for a in cfg.accounts:
         d = accounts.storage_dir(a)
@@ -319,6 +335,77 @@ def _cmd_doctor() -> int:
     for label in (launchd.WARM, launchd.POLL):
         out((agents / f"{label}.plist").exists(), f"launchd {label}")
     return 1 if bad else 0
+
+
+def _shard_mgmt_parser(subparsers) -> None:
+    parser = subparsers.add_parser("mgmt-key", help="manage the cliproxyapi management key")
+    parser.add_argument("action", choices=["set", "clear", "status"])
+    parser.add_argument("--check", action="store_true", help="explicitly check once, even after rejection")
+
+
+def _shard_mgmt_key(action: str, check: bool) -> int:
+    match action:
+        case "set":
+            try:
+                shardacct.prompt_key()
+            except ValueError as error:
+                raise CliError(str(error)) from None
+        case "clear":
+            print("key removed" if shardacct.clear_key() else "no key stored")
+        case "status":
+            present = shardacct.get_key() is not None
+            source = "env" if os.environ.get("CPOOL_SHARD_MGMT_KEY", "").strip() else "keychain"
+            print(f"present ({source})" if present else "absent")
+            if error := shardacct.cached()["error"]:
+                print(f"last error: {error}")
+            if check:
+                result = shardacct.check_auth(time.time()) if present else None
+                if result is None:
+                    return 2
+                match result["error"]:
+                    case None:
+                        print(f"ok: {len(result['map'])} auths")
+                        return 0
+                    case "auth":
+                        remaining = max(0, 5 - result["failures"])
+                        print(f"401: key rejected ({remaining} more failures lock management for 30 min)")
+                    case "down":
+                        print("management unavailable")
+                return 2
+    return 0
+
+
+def _cmd_shard(action: str) -> int:
+    settings = config.load().shard
+    match action:
+        case "on":
+            proxy_key = shard.key()
+            if proxy_key is None:
+                print("cpool: shard requires CPOOL_SHARD_KEY or CLI_PROXY_API_KEY", file=sys.stderr)
+                return 1
+            if not shard.probe(settings.url, proxy_key):
+                print(f"cpool: shard proxy unreachable: {settings.url}", file=sys.stderr)
+                return 1
+            config.save_shard(replace(settings, enabled=True))
+            print(f"shard on: new cpool run sessions route via {settings.url}; running sessions unchanged")
+        case "off":
+            config.save_shard(replace(settings, enabled=False))
+            print("shard off: new cpool run sessions run unsharded; running sessions unchanged")
+        case "status":
+            proxy_key = shard.key()
+            print(f"shard: {'enabled' if settings.enabled else 'disabled'}")
+            print(f"url: {settings.url}")
+            print(f"key: {'present' if proxy_key is not None else 'absent'}")
+            print(f"reachable: {'yes' if shard.probe(settings.url, proxy_key) else 'no'}")
+            print(f"live shard sessions: {state.live_shard_sessions(state.read())}")
+            base_url = os.environ.get("ANTHROPIC_BASE_URL")
+            if base_url and shard.relay_supports_shard(base_url):
+                print(f"route: via relay {base_url}")
+            else:
+                print(f"route: direct {settings.url}")
+                if base_url is not None and base_url != settings.url:
+                    print("warning: relay/lite route is overridden by shard")
+    return 0
 
 
 def _cmd_advise(args) -> int:
@@ -429,7 +516,9 @@ def main(argv: list[str] | None = None) -> int:
                 cfg = config.load()
                 if args.daemon:
                     return usage.poll_daemon(cfg)
-                usage.poll(cfg, int(time.time()))
+                usage.poll(cfg, int(time.time()), due=args.due)
+                if args.due:
+                    return 0
                 try:
                     warm.warm_due(cfg)
                 except Exception as e:  # noqa: BLE001
@@ -444,6 +533,8 @@ def main(argv: list[str] | None = None) -> int:
                 return statusline.main()
             case "doctor":
                 return _cmd_doctor()
+            case "shard":
+                return _shard_mgmt_key(args.action, args.check) if args.shard_cmd == "mgmt-key" else _cmd_shard(args.shard_cmd)
             case "advise":
                 return _cmd_advise(args)
     except advisor.AdvisorError as e:

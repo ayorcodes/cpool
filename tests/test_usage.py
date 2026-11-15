@@ -6,9 +6,114 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 from cpool import accounts, config, router, state, statusline, usage
 
 FIX = Path(__file__).parent / "fixtures"
+
+
+@pytest.mark.parametrize("oauth,expected", [
+    (None, None), ({}, None), ({"accessToken": "t"}, None),
+    ({"subscriptionType": None}, False), ({"subscriptionType": ""}, False),
+    ({"subscriptionType": "  "}, False), ({"subscriptionType": 1}, False),
+    ({"subscriptionType": "Free"}, False), ({"subscriptionType": "free"}, False),
+    ({"subscriptionType": "max"}, True), ({"subscriptionType": "future-plan"}, True),
+])
+def test_has_subscription_membership_boundary(tmp_path, monkeypatch, oauth, expected):
+    monkeypatch.setattr(usage, "_oauth", lambda acct: oauth)
+    assert usage.has_subscription(config.Account("a", tmp_path, 1)) is expected
+
+
+@pytest.mark.parametrize("subscription", [None, "free", "FREE", "", 1])
+def test_poll_explicit_no_subscription_cannot_restore_cached_ok(tmp_path, monkeypatch, subscription):
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    acct = config.Account("a", tmp_path / "a", 1)
+    monkeypatch.setattr(usage, "_oauth", lambda acct: {"accessToken": "t", "subscriptionType": subscription})
+    monkeypatch.setattr(usage.urllib.request, "urlopen", lambda *a, **kw: pytest.fail("no subscription used HTTP"))
+    with state.locked() as st:
+        st["accounts"]["a"] = {"auth": "ok"}
+    with pytest.raises(usage.UsageError, match="no subscription") as err:
+        usage.fetch(acct)
+    assert err.value.status == 403
+    usage.poll(config.Config(config.Pool(), (acct,)), 1000)
+    assert state.read()["accounts"]["a"]["auth"] == "no-plan"
+
+
+def test_skip_uses_account_data_not_shard_activity(tmp_path):
+    acct = config.Account("main", tmp_path, 1)
+    st = {"accounts": {"main": {"source": "poll", "updated_at": 990}},
+          "sessions": {"s": {"account": "main", "shard": True, "pid": os.getpid(), "updated_at": 999}}}
+    assert usage._skip(st, acct, 1000) is None
+    st["accounts"]["main"]["source"] = "statusline"
+    assert usage._skip(st, acct, 1000) == "live"
+    assert usage._skip(st, acct, 1120) is None
+
+
+def test_poll_due_filters_fresh_backoff_auth_and_disabled(tmp_path, monkeypatch):
+    names = ("old", "fresh", "backoff", "missing", "expired", "no-plan", "off", "new")
+    cfg = config.Config(config.Pool(), tuple(config.Account(n, tmp_path / n, i, n != "off")
+                                             for i, n in enumerate(names)))
+    st = {"accounts": {n: {"updated_at": 1} for n in names[:-1]}}
+    st["accounts"]["fresh"]["updated_at"] = 950
+    st["accounts"]["backoff"]["poll_backoff_until"] = 1100
+    for n in ("missing", "expired", "no-plan"):
+        st["accounts"][n]["auth"] = n
+    assert usage.poll_due(cfg, st, 1000) == ["old", "new"]
+    assert usage.poll_due(config.Config(config.Pool(live_poll_s=0), cfg.accounts), st, 1000) == []
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    st["accounts"]["old"].update(source="statusline", updated_at=930)
+    (tmp_path / "state.json").write_text(json.dumps(st))
+    fetched = []
+    def fetch(acct):
+        fetched.append(acct.name)
+        return {"auth": "ok", "source": "poll", "five_hour": {"used": 42}}
+    monkeypatch.setattr(usage, "fetch", fetch)
+    usage.poll(cfg, 1000, due=True)
+    assert fetched == ["old", "new"]
+    assert state.read()["accounts"]["old"]["five_hour"]["used"] == 42
+
+
+def test_kick_throttle_lock_and_unwritable_files(tmp_path, monkeypatch):
+    import fcntl
+    from dataclasses import replace
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    cfg = config.Config(config.Pool(), ())
+    calls = []
+    monkeypatch.setattr(usage.subprocess, "Popen", lambda *a, **k: calls.append((a, k)))
+    assert usage.kick(cfg, 1000) is True
+    assert usage.kick(cfg, 1001) is False
+    assert len(calls) == 1
+    assert calls[0][0][0][-2:] == ["poll", "--due"]
+    assert calls[0][1]["start_new_session"] is True
+    with (tmp_path / "poll.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert usage.kick(cfg, 1061) is False
+    assert usage.kick(replace(cfg, pool=config.Pool(live_poll_s=0)), 2000) is False
+    (tmp_path / "poll.kicked").unlink()
+    (tmp_path / "poll.kicked").mkdir()
+    assert usage.kick(cfg, 2000) is False
+    (tmp_path / "poll.kicked").rmdir()
+    (tmp_path / "poll.lock").unlink()
+    (tmp_path / "poll.lock").mkdir()
+    assert usage.kick(cfg, 2000) is False
+    assert len(calls) == 1
+
+
+def test_retry_after_from_http_extends_backoff(tmp_path, monkeypatch):
+    import urllib.error
+    from email.message import Message
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    cfg = config.Config(config.Pool(), (config.Account("a", tmp_path / "a", 1),))
+    monkeypatch.setattr(usage, "_oauth", lambda a: {"accessToken": "t"})
+    headers = Message()
+    headers["Retry-After"] = "1800"
+    def limited(*args, **kwargs):
+        raise urllib.error.HTTPError(usage.URL, 429, "limited", headers, None)
+    monkeypatch.setattr(usage.urllib.request, "urlopen", limited)
+    usage.poll(cfg, 1000)
+    assert state.read()["accounts"]["a"]["poll_backoff_until"] == 2800
+    assert state.read()["accounts"]["a"]["poll_backoff_s"] == 1800
 
 
 def test_normalize_real_response():
@@ -53,12 +158,15 @@ def _setup_statusline(tmp_path, monkeypatch, now=1_000_000):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "acct"))
     monkeypatch.setenv("CPOOL_RUN", "run-1")
+    monkeypatch.delenv("CPOOL_SHARD", raising=False)
     monkeypatch.delenv("CPOOL_STATUSLINE_NEXT", raising=False)
     acct = config.Account("a", tmp_path / "acct", 1)
     config.save_account(acct)
     monkeypatch.setattr(accounts, "resolve_account", lambda cfg, d: cfg.accounts[0])
     monkeypatch.setattr(router, "should_leave", lambda s, a, pool, now: None)
+    monkeypatch.setattr(statusline, "_ancestor_claude_pid", os.getpid)
     monkeypatch.setattr(statusline.time, "time", lambda: now)
+    monkeypatch.setattr(usage, "kick", lambda cfg, now: False)
 
 
 def _render(monkeypatch, payload):
@@ -160,9 +268,9 @@ def test_statusline_writes_state(tmp_path, monkeypatch, capsys):
     assert s["cache"] == {"read": 3, "created": 1} and s["turns"][0]["u5h"] == 40.0
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 2
-    assert lines[0].startswith("▸ a  5h ▰▰▰▱▱▱▱▱  40% ↻")
+    assert lines[0].startswith("▸ a  ●          1  5h ▰▰▰▱▱▱▱▱  40% ↻")
     assert "7d ▰▱▱▱▱▱▱▱  11% ↻" in lines[0]
-    assert lines[1] == "  b  5h ▰▰▰▰▰▰▱▱  72% ↻1h00m  7d ▱▱▱▱▱▱▱▱   0%"
+    assert lines[1] == "  b  ·          0  5h ▰▰▰▰▰▰▱▱  72% ↻1h00m  7d ▱▱▱▱▱▱▱▱   0%"
 
 
 def test_statusline_disabled_accounts_use_compact_fallback(tmp_path, monkeypatch, capsys):
@@ -179,8 +287,8 @@ def test_statusline_chain_precedes_account_rows(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("CPOOL_STATUSLINE_NEXT", "echo mine")
     config.save_account(config.Account("b", tmp_path / "b", 2))
     _render(monkeypatch, {})
-    assert capsys.readouterr().out.splitlines() == ["mine", "▸ a  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –",
-                                                     "  b  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –"]
+    assert capsys.readouterr().out.splitlines() == ["mine", "▸ a  ·          0  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –",
+                                                     "  b  ·          0  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –"]
 
 
 def _leave_setup(tmp_path, monkeypatch, other):

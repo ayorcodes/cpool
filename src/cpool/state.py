@@ -61,6 +61,15 @@ def pid_alive(pid) -> bool:
 _pid_alive = pid_alive
 
 
+def live_shard_ids(st: dict) -> set[str]:
+    return {sid for sid, session in (st.get("sessions") or {}).items()
+            if session.get("shard") is True and pid_alive(session.get("pid"))}
+
+
+def live_shard_sessions(st: dict) -> int:
+    return len(live_shard_ids(st))
+
+
 def _prune(st: dict) -> None:
     sessions = st.get("sessions", {})
     if not isinstance(sessions, dict):

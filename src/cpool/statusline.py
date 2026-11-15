@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-from . import accounts, codex, config, journal, render, state
+from . import accounts, codex, config, journal, render, state, usage
 
 
 def _ancestor_claude_pid() -> int:
@@ -52,7 +52,11 @@ def _fresher(stored, new: dict | None, now: int) -> bool:
         return not (isinstance(old, (int, float)) and old > now)
     if r <= now:
         return False
-    return not (isinstance(old, (int, float)) and old > r)
+    if isinstance(old, (int, float)) and old > r:
+        return False
+    if old == r and isinstance(stored, dict) and isinstance(stored.get("used"), (int, float)):
+        return new["used"] > stored["used"]  # usage only grows within a window; equal/lower is a replay
+    return True
 
 
 def _record(payload: dict) -> str | None:
@@ -61,7 +65,8 @@ def _record(payload: dict) -> str | None:
     if acct is None:
         return None
     now = int(time.time())
-    five, seven = _window(payload, "five_hour"), _window(payload, "seven_day")
+    shard = os.environ.get("CPOOL_SHARD") == "1"
+    five, seven = (None, None) if shard else (_window(payload, "five_hour"), _window(payload, "seven_day"))
     sid = payload.get("session_id")
     model = (payload.get("model") or {}).get("id")
     eff = payload.get("effort")
@@ -86,6 +91,10 @@ def _record(payload: dict) -> str | None:
                 s["leave_manual"] = False  # a manual switch is spent once the session is on another account
             s.update(account=acct.name, run=os.environ.get("CPOOL_RUN"), pid=pid, cwd=cwd,
                      model=model, updated_at=now, ctx_used=ctx, cache=cache if isinstance(cache, dict) else {})
+            if shard:
+                s["shard"] = True
+            else:
+                s.pop("shard", None)
             if isinstance(effort, str) and effort:
                 s["effort"] = effort
             s.setdefault("started_at", now)
@@ -93,21 +102,25 @@ def _record(payload: dict) -> str | None:
             if five and (not turns or turns[-1].get("u5h") != five["used"]):
                 turns.append({"ts": now, "u5h": five["used"]})
             s["turns"] = turns[-6:]
-            try:
-                from . import router
-                leave = router.should_leave(s, a, cfg.pool, now)
-                s.pop("leave_blocked", None)
-                if leave and leave != "manual":
-                    others = {k: v for k, v in st["sessions"].items() if k != sid}
-                    d = router.choose(
-                        {**st, "sessions": others}, cfg, model=model or "", cwd=cwd or "", now=now,
-                        current=acct.name, exclude=frozenset({acct.name}), forced=True)
-                    if d.account is None:
-                        s["leave_blocked"] = d.reason
-                        leave = None
-                s["leave"] = leave
-            except (ImportError, NotImplementedError):
+            if shard:
                 s.pop("leave", None)
+                s.pop("leave_blocked", None)
+            else:
+                try:
+                    from . import router
+                    leave = router.should_leave(s, a, cfg.pool, now)
+                    s.pop("leave_blocked", None)
+                    if leave and leave != "manual":
+                        others = {k: v for k, v in st["sessions"].items() if k != sid}
+                        d = router.choose(
+                            {**st, "sessions": others}, cfg, model=model or "", cwd=cwd or "", now=now,
+                            current=acct.name, exclude=frozenset({acct.name}), forced=True)
+                        if d.account is None:
+                            s["leave_blocked"] = d.reason
+                            leave = None
+                    s["leave"] = leave
+                except (ImportError, NotImplementedError):
+                    s.pop("leave", None)
     return acct.name
 
 
@@ -136,6 +149,10 @@ def main() -> int:
         name = _record(payload)
     except Exception as e:  # noqa: BLE001
         journal.log("error", where="statusline", error=type(e).__name__, detail=str(e)[:200])
+    try:
+        usage.kick(config.load(), int(time.time()))
+    except Exception as e:  # noqa: BLE001
+        journal.log("error", where="statusline.kick", error=type(e).__name__)
     try:
         cfg = config.load()
         st = state.read()

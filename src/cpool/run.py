@@ -10,10 +10,11 @@ import subprocess
 import sys
 import time
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from . import accounts, config, handoff, journal, paths, router, schedule, state
+from . import accounts, config, handoff, journal, paths, router, state, usage
 
 MAX_RELAUNCHES = 5
 _warned_missing: set[str] = set()  # --settings paths already reported this `cpool run`
@@ -179,21 +180,38 @@ def _skip_text(reason: str) -> str:
     return {"limit": "at limit"}.get(reason, reason)
 
 
+def _subscription_config(cfg):
+    return replace(cfg, accounts=tuple(a for a in cfg.accounts
+                                      if a.enabled and usage.has_subscription(a) is not False))
+
+
 def _route(cfg, *, pinned: str | None, model: str | None, now: int, **kw) -> tuple[str, str, dict] | None:
     """(account, reason, scores) for the first launch, or None (message already printed)."""
     enabled = {a.name: a for a in cfg.accounts if a.enabled}
+    eligible = _subscription_config(cfg)
+    members = {a.name for a in eligible.accounts}
+    st = state.read()
+    accts = st.get("accounts") or {}
     if pinned is not None:
         if pinned not in enabled:
             _stderr(f"cpool: no enabled account {pinned!r}")
             return None
+        if pinned not in members:
+            _stderr(f"cpool: account {pinned!r} has no subscription")
+            return None
+        auth = (accts.get(pinned) or {}).get("auth")
+        if auth in {"no-plan", "missing", "expired"}:
+            _stderr(f"cpool: account {pinned!r} unavailable (auth: {auth})")
+            return None
         return pinned, "pinned", {}
-    st = state.read()
-    d = router.choose(st, cfg, model=model or "", cwd=os.getcwd(), now=now, **kw)
+    if not members and enabled:
+        _stderr(f"cpool: no account available (no subscription: {', '.join(enabled)})")
+        return None
+    d = router.choose(st, eligible, model=model or "", cwd=os.getcwd(), now=now, **kw)
     if d.account is not None:
         return d.account, d.reason, d.scores
-    accts = st.get("accounts") or {}
-    cands = [n for n in enabled if (accts.get(n) or {}).get("credits_enabled") is False
-             and (accts.get(n) or {}).get("auth") not in schedule.UNWARMABLE_AUTH]
+    cands = [n for n in enabled if n in members and (accts.get(n) or {}).get("credits_enabled") is False
+             and (accts.get(n) or {}).get("auth") in (None, "ok")]
     if not cands:
         _stderr(f"cpool: no account available ({d.reason}); earliest reset {_hhmm(d.earliest_reset)}")
         return None
@@ -273,12 +291,30 @@ def main(argv: list[str]) -> int:
     if routed is None:
         return 1
     acct_name, reason, scores = routed
+    shard_key = None
+    relay_url = None
+    if cfg.shard.enabled:
+        from . import shard
+
+        shard_key = shard.key()
+        if shard_key is None or not shard.probe(cfg.shard.url, shard_key, timeout=2.0):
+            _stderr("cpool: shard proxy unreachable or key missing "
+                    "(set CPOOL_SHARD_KEY or CLI_PROXY_API_KEY), running unsharded")
+            shard_key = None
+        else:
+            base_url = os.environ.get("ANTHROPIC_BASE_URL")
+            if base_url and shard.relay_supports_shard(base_url):
+                relay_url = base_url
+            elif base_url is not None and base_url != cfg.shard.url:
+                _stderr(f"cpool: shard overriding ANTHROPIC_BASE_URL={base_url} with {cfg.shard.url}")
     by_name = {a.name: a for a in cfg.accounts}
 
     run_id = uuid.uuid4().hex
     plugin = _plugin_dir()
     ours = {"statusLine": {"type": "command", "command": f"{_cpool_bin()} statusline"},
             "autoContinueAtUsageLimit": False}
+    if cfg.pool.statusline_refresh_s:
+        ours["statusLine"]["refreshInterval"] = cfg.pool.statusline_refresh_s
     if user_settings is not None:
         base = _load_settings(user_settings)
     else:
@@ -293,12 +329,25 @@ def main(argv: list[str]) -> int:
         relaunches = 0
         while True:
             acct = by_name[acct_name]
+            if usage.has_subscription(acct) is False:
+                _stderr(f"cpool: account {acct_name!r} has no subscription")
+                return 1
             env = dict(os.environ)
             for k, v in accounts.launch_env(acct).items():
                 if v is None:
                     env.pop(k, None)
                 else:
                     env[k] = v
+            if shard_key is not None:
+                env["ANTHROPIC_BASE_URL"] = relay_url or cfg.shard.url
+                env["ANTHROPIC_AUTH_TOKEN"] = shard_key
+                env["CPOOL_SHARD"] = "1"
+                env.pop("ANTHROPIC_API_KEY", None)
+                if relay_url is not None:
+                    headers = env.get("ANTHROPIC_CUSTOM_HEADERS", "")
+                    if not any(line.strip().lower() == "x-cpool-shard: 1" for line in headers.splitlines()):
+                        headers = headers + "\nx-cpool-shard: 1" if headers else "x-cpool-shard: 1"
+                    env["ANTHROPIC_CUSTOM_HEADERS"] = headers
             env["CPOOL_RUN"] = run_id
             env["CPOOL_ACCOUNT"] = acct_name
             next_cmd = _next_statusline(user_settings, acct)
@@ -315,7 +364,10 @@ def main(argv: list[str]) -> int:
             code = _spawn(cmd, env)
 
             now = int(time.time())
-            h = handoff.take(run_id) or (None if print_mode else _hard_handoff(run_id, model, now))
+            h = handoff.take(run_id)
+            if shard_key is not None:
+                return code
+            h = h or (None if print_mode else _hard_handoff(run_id, model, now))
             if h is None:
                 return code
             src = h["from"]
@@ -338,11 +390,14 @@ def main(argv: list[str]) -> int:
                                      if k != h["session_id"]}}
             model = h.get("model") or model
             effort = h.get("effort") or effort
-            d = router.choose(st, cfg, model=model or "", cwd=os.getcwd(), now=now,
+            eligible = _subscription_config(cfg)
+            d = router.choose(st, eligible, model=model or "", cwd=os.getcwd(), now=now,
                               current=src, exclude=frozenset({src, acct_name}), forced=True,
                               ignore_cooldown=h.get("reason") == "manual")
             if d.account is None:
-                why = ", ".join(f"{n}: {_skip_text(r)}" for n, r in d.skipped.items())
+                skipped = {**d.skipped, **{a.name: "no subscription" for a in cfg.accounts
+                                          if a.enabled and a not in eligible.accounts}}
+                why = ", ".join(f"{n}: {_skip_text(r)}" for n, r in skipped.items())
                 reset = (f"; earliest reset {_hhmm(d.earliest_reset)}"
                          if any(r == "limit" for r in d.skipped.values()) else "")
                 _stderr(f"cpool: no account to move to ({why}){reset}; "

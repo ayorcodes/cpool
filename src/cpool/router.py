@@ -112,12 +112,16 @@ def score(
 
     s = (0.7 * (100 - u5h) + 0.25 * (100 - u7d)) * cap_ratio
     if reset5 is not None:
-        s += 25 * (100 - u5h) / 100 * max(0.0, 1 - (reset5 - now) / 60 / 120)
+        h5 = (reset5 - now) / 3600
+        s += pool.reset_weight * (100 - u5h) / 100 * max(0.0, 1 - h5 / 5)
     if reset7 is not None:
         f = min(1.0, max(0.0, 1 - (reset7 - now) / (7 * 86400)))
         s += min(15.0, max(-15.0, 0.3 * (100 * f - u7d)))
-        if (reset7 - now) <= pool.expiry_h * 3600:
-            s += pool.expiry_weight * (100 - u7d) / 100
+        left7 = 100 - u7d
+        need_h = left7 / pool.burn_h
+        avail_h = max(1e-6, (reset7 - now) / 3600 * pool.duty)
+        p = min(1.0, max(0.0, (need_h / avail_h - 0.5) / 0.5))
+        s += pool.expiry_weight * left7 / 100 * p
     mine = [x for x in sessions.values() if x.get("account") == name]
     if any(x.get("cwd") == cwd for x in mine):
         s += 10
