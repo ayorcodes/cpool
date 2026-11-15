@@ -78,12 +78,41 @@ def test_status_text_lists_accounts_without_ansi_when_piped(tmp_path, monkeypatc
     output = capsys.readouterr().out
     lines = output.splitlines()
     assert "\x1b" not in output
-    assert len(lines) == 4
-    assert lines[-2].startswith("pool ")
+    assert len(lines) == 5
+    assert lines[-3].lstrip().startswith("pool")
     assert lines[0].startswith("▸ main   ·          0  5h ▰▰▰▱▱▱▱▱  42% ↻1h00m  7d ▰▱▱▱▱▱▱▱  11% ↻1d0h   ?  no data")
     assert lines[1].startswith("  other  ·          0  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –")
     assert "credits" not in lines[0]
     assert lines[-1] == "→ next: main (best)"
+
+
+@pytest.mark.parametrize("surface", ["status", "statusline"])
+def test_short_account_aligns_with_pool(tmp_path, monkeypatch, capsys, surface):
+    import io
+    import sys
+    from cpool import statusline, usage
+
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("CPOOL_SHARD", raising=False)
+    monkeypatch.delenv("CPOOL_STATUSLINE_NEXT", raising=False)
+    monkeypatch.setattr(cli.time, "time", lambda: 1000)
+    monkeypatch.setattr(statusline, "_record", lambda payload: None)
+    monkeypatch.setattr(usage, "kick", lambda cfg, now: False)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"{}")))
+    (tmp_path / "config.toml").write_text(
+        '[[account]]\nname = "a"\ndir = "default"\norder = 1\n')
+    (tmp_path / "state.json").write_text(json.dumps({"accounts": {
+        "a": {"five_hour": {"used": 42, "resets_at": 4600},
+              "credits_enabled": False, "auth": "ok", "updated_at": 1000}
+    }}))
+
+    assert cli.main([surface]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].index("5h") == lines[1].index("5h") == 22
+    assert lines[1].lstrip().startswith("pool")
+    assert lines[2].index("next reset") == 22
 
 
 def test_switch_and_status_ignore_dead_sessions(tmp_path, monkeypatch, capsys):

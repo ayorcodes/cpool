@@ -48,19 +48,20 @@ With `[shard] enabled = true`, requests go through a cliproxyapi proxy instead o
 - Each poll (the poller, and at most once a minute from the statusline) ranks the accounts: eligible ones by 5-hour reset, soonest first, then by score, and ineligible ones last. It sets each Claude auth file's `priority` to `100 - rank`, matching files to accounts by email. It sends nothing when the order hasn't changed, and journals `shard-order` when it has.
 - This needs the management key: `cpool shard mgmt-key set` stores it in the Keychain. A key the proxy rejects isn't retried until you set a new one.
 
-### The pool line
+### The pool rows
 
-The statusline and `cpool status` end with one line for the whole pool:
+The statusline and `cpool status` end with two rows for the whole pool, under the account rows:
 
 ```
-pool ██████████▓▓▓░░░ 2.1/3 · runway 4h10 · next +0.6 claude2 10:30 · seamless · wk 42% +5 ahead
+  main     ·          0  5h ▰▱▱▱▱▱▱▱  13% ↻3h29m  7d ▰▰▰▰▱▱▱▱  44% ↻5d3h
+  claude2  ·          0  5h ▱▱▱▱▱▱▱▱   0%         7d ▰▰▰▰▱▱▱▱  52% ↻2d19h
+  pool                   5h ▰▱▱▱▱▱▱▱   8%         7d ▰▰▰▰▱▱▱▱  52%
+                         lasts ~10h · next reset claude3 15:29 · no gap
 ```
 
-- The bar and `2.1/3` show the 5-hour room left, in whole windows weighted by plan size. `█` is room on accounts that can take work now, `▓` is room on accounts at a limit or in cooldown.
-- `runway` is that room divided by the current burn (the median per-hour rise in 5-hour usage over recent turns of live sessions).
-- `next` is the soonest reset and how much room it gives back.
-- `seamless` means the runway lasts until that reset; otherwise the line shows the expected gap.
-- `wk` is pooled weekly usage and how far it is ahead of or behind the weekly pace.
+- The `pool` bars read like the account bars: they fill as usage rises. `5h` is the 5-hour use of all accounts combined, weighted by plan size, and `7d` the combined weekly use. Accounts with usage credits on, a login problem or no data yet are left out.
+- `lasts ~10h` is how long that room lasts at the current burn (the median per-hour rise in 5-hour usage over recent turns of live sessions).
+- `next reset` is the soonest reset. `no gap` means the room lasts until then; otherwise the row shows `gap ~Xm at HH:MM`.
 
 ### Staggered windows
 

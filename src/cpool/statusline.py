@@ -160,17 +160,17 @@ def main() -> int:
         now = int(time.time())
         color = render.color_enabled()
         snap = codex.snapshot(now) if any(a.enabled for a in cfg.accounts) else None
+        name_width = max(4, max((len(a.name) for a in cfg.accounts if a.enabled), default=0))
+        if snap is not None:
+            name_width = max(len("codex"), name_width)
         lines = render.account_lines(cfg, st, active.name if active else None, now,
-                                     color=color, min_width=len("codex") if snap is not None else 0)
+                                     color=color, min_width=name_width)
         if lines and snap is not None:
-            name_width = max(len("codex"), max(len(a.name) for a in cfg.accounts if a.enabled))
             lines.append(render.codex_line(snap, now, name_width=name_width, color=color))
         if not lines:
             lines = [_compact(payload, name)]
         try:
-            pool = render.pool_line(cfg, st, now, color=color)
-            if pool is not None:
-                lines.append(pool)
+            lines.extend(render.pool_lines(cfg, st, now, name_width=name_width, color=color))
         except Exception as e:  # noqa: BLE001
             journal.log("error", where="statusline.pool", error=type(e).__name__, detail=str(e)[:200])
     except Exception as e:  # noqa: BLE001

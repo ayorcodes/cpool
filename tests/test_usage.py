@@ -267,7 +267,8 @@ def test_statusline_writes_state(tmp_path, monkeypatch, capsys):
     config.save_account(config.Account("b", tmp_path / "b", 2))
     config.save_account(config.Account("disabled", tmp_path / "disabled", 3, enabled=False))
     with state.locked() as st:
-        st["accounts"]["b"] = {"five_hour": {"used": 72, "resets_at": 1_003_600}}
+        st["accounts"]["b"] = {"five_hour": {"used": 72, "resets_at": 1_003_600},
+                               "credits_enabled": False, "updated_at": 1_000_000}
     payload = {"session_id": "s1", "model": {"id": "m"}, "effort": {"level": "high"}, "workspace": {"current_dir": "/w"},
                "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": 1793543399},
                                "seven_day": {"used_percentage": 11, "resets_at": 1793900000}},
@@ -282,11 +283,11 @@ def test_statusline_writes_state(tmp_path, monkeypatch, capsys):
     assert s["effort"] == "high"
     assert s["cache"] == {"read": 3, "created": 1} and s["turns"][0]["u5h"] == 40.0
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 3
-    assert lines[2].startswith("pool ")
-    assert lines[0].startswith("▸ a  ●          1  5h ▰▰▰▱▱▱▱▱  40% ↻")
+    assert len(lines) == 4
+    assert lines[2].lstrip().startswith("pool")
+    assert lines[0].startswith("▸ a     ●          1  5h ▰▰▰▱▱▱▱▱  40% ↻")
     assert "7d ▰▱▱▱▱▱▱▱  11% ↻" in lines[0]
-    assert lines[1] == "  b  ·          0  5h ▰▰▰▰▰▰▱▱  72% ↻1h00m  7d ▱▱▱▱▱▱▱▱   0%"
+    assert lines[1] == "  b     ·          0  5h ▰▰▰▰▰▰▱▱  72% ↻1h00m  7d ▱▱▱▱▱▱▱▱   0%"
 
 
 def test_statusline_disabled_accounts_use_compact_fallback(tmp_path, monkeypatch, capsys):
@@ -303,8 +304,8 @@ def test_statusline_chain_precedes_account_rows(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("CPOOL_STATUSLINE_NEXT", "echo mine")
     config.save_account(config.Account("b", tmp_path / "b", 2))
     _render(monkeypatch, {})
-    assert capsys.readouterr().out.splitlines() == ["mine", "▸ a  ·          0  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –",
-                                                     "  b  ·          0  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –"]
+    assert capsys.readouterr().out.splitlines() == ["mine", "▸ a     ·          0  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –",
+                                                     "  b     ·          0  5h ▱▱▱▱▱▱▱▱    –         7d ▱▱▱▱▱▱▱▱    –"]
 
 
 def _leave_setup(tmp_path, monkeypatch, other):
