@@ -16,6 +16,8 @@ from pathlib import Path
 
 from . import accounts, config, handoff, journal, paths, router, state, usage
 
+HANDOFF_GRACE_S = 3
+KILL_AFTER_S = 10
 MAX_RELAUNCHES = 5
 _warned_missing: set[str] = set()  # --settings paths already reported this `cpool run`
 
@@ -236,17 +238,31 @@ def _next_statusline(user_settings: str | None, acct) -> str | None:
     return _statusline_cmd(_load_settings(str(sj))) if sj.exists() else None
 
 
-def _spawn(cmd: list[str], env: dict[str, str]) -> int:
+def _spawn(cmd: list[str], env: dict[str, str], watch: Path | None = None) -> int:
     old_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
     old_quit = signal.signal(signal.SIGQUIT, signal.SIG_IGN)
     try:
-        return subprocess.Popen(cmd, env=env, preexec_fn=_child_signals).wait()
+        proc = subprocess.Popen(cmd, env=env, preexec_fn=_child_signals)
+        noticed = None
+        terminated = None
+        while proc.poll() is None:
+            now = time.monotonic()
+            if noticed is None and watch is not None and watch.exists():
+                noticed = now
+            if terminated is None and noticed is not None and now - noticed >= HANDOFF_GRACE_S:
+                proc.terminate()
+                terminated = now
+            if terminated is not None and now - terminated >= KILL_AFTER_S:
+                proc.kill()
+                break
+            time.sleep(0.2)
+        return proc.wait()
     finally:
         signal.signal(signal.SIGINT, old_int)
         signal.signal(signal.SIGQUIT, old_quit)
 
 
-def _hard_handoff(run_id: str, model: str | None, now: int) -> dict | None:
+def _hard_handoff(run_id: str, model: str | None, now: int, auto: bool) -> dict | None:
     """No handoff file: if this run's account hit a hard limit, offer to move on."""
     st = state.read()
     mine = [(s.get("updated_at") or 0, sid, s) for sid, s in (st.get("sessions") or {}).items()
@@ -259,15 +275,17 @@ def _hard_handoff(run_id: str, model: str | None, now: int) -> dict | None:
     fam = router.family(sess.get("model") or model)
     at_limit = router.win(acct, "five_hour", now)[0] >= 99 or (
         fam is not None and router.win(acct.get("model_week") or {}, fam, now)[0] >= 99)
-    if not at_limit or not sys.stdin.isatty():
+    if not at_limit:
         return None
-    try:
-        ans = input(f"cpool: {name} is at its limit. Resume on another account? [Y/n] ")
-    except EOFError:
-        return None
-    if ans.strip().lower() not in ("", "y", "yes"):
-        return None
-    return {"session_id": sid, "from": name, "model": sess.get("model") or model or "",
+    if not auto and sys.stdin.isatty():
+        try:
+            ans = input(f"cpool: {name} is at its limit. Resume on another account? [Y/n] ")
+        except EOFError:
+            return None
+        if ans.strip().lower() not in ("", "y", "yes"):
+            return None
+    return {"version": 1, "run": run_id, "ts": now, "agents": handoff.pending_agents(run_id),
+            "session_id": sid, "from": name, "model": sess.get("model") or model or "",
             "effort": sess.get("effort"), "reason": "hard", "compacted": False}
 
 
@@ -326,8 +344,11 @@ def main(argv: list[str]) -> int:
 
     try:
         journal.log("route", run=run_id, account=acct_name, reason=reason, scores=scores)
+        paths.agents_dir().mkdir(parents=True, exist_ok=True)
+        kept = None
         relaunches = 0
         while True:
+            (paths.agents_dir() / f"{run_id}.json").unlink(missing_ok=True)
             acct = by_name[acct_name]
             if usage.has_subscription(acct) is False:
                 _stderr(f"cpool: account {acct_name!r} has no subscription")
@@ -348,6 +369,10 @@ def main(argv: list[str]) -> int:
                     if not any(line.strip().lower() == "x-cpool-shard: 1" for line in headers.splitlines()):
                         headers = headers + "\nx-cpool-shard: 1" if headers else "x-cpool-shard: 1"
                     env["ANTHROPIC_CUSTOM_HEADERS"] = headers
+            env["CPOOL_HARD"] = str(cfg.pool.hard)
+            env.pop("CPOOL_RESUMED", None)
+            if kept is not None:
+                env["CPOOL_RESUMED"] = str(kept.resolve())
             env["CPOOL_RUN"] = run_id
             env["CPOOL_ACCOUNT"] = acct_name
             next_cmd = _next_statusline(user_settings, acct)
@@ -361,13 +386,14 @@ def main(argv: list[str]) -> int:
             if effort:
                 cmd += ["--effort", effort]
             cmd += ["--plugin-dir", plugin, "--settings", str(settings_file)]
-            code = _spawn(cmd, env)
+            code = _spawn(cmd, env, watch=None if print_mode or shard_key is not None else
+                          paths.handoff_dir() / f"{run_id}.json")
 
             now = int(time.time())
             h = handoff.take(run_id)
             if shard_key is not None:
                 return code
-            h = h or (None if print_mode else _hard_handoff(run_id, model, now))
+            h = h or (None if print_mode else _hard_handoff(run_id, model, now, cfg.pool.auto_hard))
             if h is None:
                 return code
             src = h["from"]
@@ -403,6 +429,7 @@ def main(argv: list[str]) -> int:
                 _stderr(f"cpool: no account to move to ({why}){reset}; "
                         f"resume manually: claude --resume {h['session_id']}")
                 return code
+            kept = handoff.keep(h, run_id, relaunches + 1)
             wait = random.uniform(*cfg.pool.jitter_s)
             _stderr(f"cpool: moving session to {d.account} in {wait:.0f}s ({h.get('reason')})")
             time.sleep(wait)

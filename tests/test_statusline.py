@@ -113,3 +113,27 @@ def test_shard_statusline_never_leaves_busy_launch_account(tmp_path, monkeypatch
     assert session["shard"] is True
     assert "leave" not in session
     assert "leave_blocked" not in session
+
+
+@pytest.mark.parametrize("leave,leave_manual,deferred,expected", [("soft", False, 1, "leave deferred: 1 agent"),
+    ("soft", False, 2, "leave deferred: 2 agents"), (None, True, 2, "leave deferred: 2 agents"),
+    (None, False, 2, None), ("soft", False, 0, None)])
+def test_deferred_leave_status(tmp_path, monkeypatch, capsys, leave, leave_manual, deferred, expected):
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    monkeypatch.setenv("CPOOL_RUN", "r")
+    monkeypatch.delenv("CPOOL_STATUSLINE_NEXT", raising=False)
+    monkeypatch.setattr(statusline, "_record", lambda payload: None)
+    monkeypatch.setattr(usage, "kick", lambda *a: None)
+    config.save_account(config.Account("a", tmp_path / "a", 1))
+    with state.locked() as st:
+        st["sessions"]["s"] = {"pid": os.getpid(), "updated_at": 1, "leave": leave,
+                                "leave_manual": leave_manual}
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "r.json").write_text(json.dumps({"version": 1, "agents": {}, "deferred": deferred}))
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b'{"session_id":"s"}')))
+    assert statusline.main() == 0
+    out = capsys.readouterr().out
+    if expected:
+        assert expected in out
+    else:
+        assert "leave deferred" not in out

@@ -37,6 +37,8 @@ Skeleton (wave 0b) implements `paths`, `config`, `state`, `journal` fully and st
 | `CLAUDE_CONFIG_DIR` | `run`, `warm` | the account's `dir` launch string, ~-expanded, no trailing `/` (Keychain hash is of this exact string); unset for `dir = "default"` |
 | `CPOOL_ACCOUNT` | `run` | account name, for the mod and statusline |
 | `CPOOL_RUN` | `run` | uuid4 for one `cpool run` invocation; stable across relaunches; keys the handoff file |
+| `CPOOL_HARD` | `run` | `pool.hard`; the mod leaves even with subagents running at or above this 5-hour % |
+| `CPOOL_RESUMED` | `run`, relaunches only | path of the kept handoff under `~/.cpool/handoff/done/`; the mod submits the resume prompt from it |
 | `CPOOL_STATUSLINE_NEXT` | `add`/`doctor` writes into shared settings | the user's original statusline command; prints its output, then cpool's account rows |
 
 ## `~/.cpool/config.toml`
@@ -46,6 +48,8 @@ Skeleton (wave 0b) implements `paths`, `config`, `state`, `journal` fully and st
 start_hour   = 8      # first reset of account order=1
 soft         = 85     # u5h at/above → leave at next Stop
 projected    = 97     # u5h + est_next_turn at/above → leave
+hard         = 97     # u5h at/above → leave even with subagents running (2026-11-15)
+auto_hard    = true   # hard limit with no handoff file → relaunch without [Y/n] (2026-11-15)
 weekly_soft  = 90     # u7d at/above → ineligible
 margin       = 10     # hysteresis for moving a non-forced session
 cooldown_min = 5      # an account just left is ineligible this long
@@ -101,11 +105,18 @@ A window whose `resets_at` has passed reads as `{"used": 0, "resets_at": null}`.
 
 ## `~/.cpool/handoff/<CPOOL_RUN>.json`
 
-Written by the mod (W5), consumed (read + delete) by `run` (W6).
+Written by the mod (W5), consumed by `run` (W6): taken from `handoff/`, kept as `handoff/done/<run>-<n>.json`.
 ```json
 {"version": 1, "run": "<uuid>", "session_id": "<id>", "from": "main", "model": "claude-opus-5-5", "effort": "high",
- "reason": "soft|projected|hard|model", "compacted": true, "ts": 1762000200}
+ "reason": "soft|projected|hard|model|manual", "compacted": true, "ts": 1762000200,
+ "agents": [{"agentId": "a1", "description": "...", "subagentType": "...", "model": "sonnet", "background": true,
+             "prompt": "<first brief>", "report": "<Report: path>|null", "ts": 1762000100}]}
 ```
+`agents` lists the subagents that had not finished (amended 2026-11-15). Once the file has existed 3 s, `run` sends the child SIGTERM, then SIGKILL 10 s later; the mod no longer runs `exit`, which prompts while background agents run.
+
+## `~/.cpool/agents/<CPOOL_RUN>.json`
+
+Written by the mod only, rewritten whole on each change, for the current Claude process: `{"version": 1, "agents": {"<agentId>": {...record, "done": bool}}, "deferred": N}`. A record keeps the first prompt seen for its `agentId` (the spawn hook re-fires on resume with the notification as prompt). `deferred` is the number of top-level agents a soft or manual leave is waiting on; the statusline shows `leave deferred: N agents`.
 No file on child exit → `run` exits with the child's code, except the hard-limit path (W6 detects via `state.accounts[from].limited` set by the statusline/banner, then synthesizes `reason: "hard", compacted: false`).
 
 ## `~/.cpool/log/<YYYY-MM-DD>.jsonl`
@@ -119,7 +130,7 @@ One object per line: `{"ts": epoch, "kind": "route|switch|warm|poll|cache_miss|a
 def home() -> Path                       # $CPOOL_HOME or ~/.cpool
 # config.py
 @dataclass(frozen=True) class Account: name: str; dir: Path; order: int; enabled: bool = True; capacity: float | None = None   # None → from state tier
-@dataclass(frozen=True) class Pool: start_hour:int=8; soft:float=85; projected:float=97; weekly_soft:float=90; margin:float=10; cooldown_min:int=5; stale_min:int=20; poll_min:int=10; jitter_s:tuple[int,int]=(5,15); ctx_max_uncompacted:float=30
+@dataclass(frozen=True) class Pool: start_hour:int=8; soft:float=85; projected:float=97; weekly_soft:float=90; margin:float=10; cooldown_min:int=5; stale_min:int=20; poll_min:int=10; jitter_s:tuple[int,int]=(5,15); ctx_max_uncompacted:float=30; hard:float=97; auto_hard:bool=True
 @dataclass(frozen=True) class Config: pool: Pool; accounts: tuple[Account, ...]
 def load(path: Path | None = None) -> Config
 def save_account(acct: Account) -> None   # append/replace one [[account]], keep the rest of the file
@@ -174,6 +185,7 @@ W1 accounts+mirror · W2 router (+tests) · W3 statusline+usage · W4 schedule+w
 - Stagger step is in 30-min slots: `k = max(30, floor30(300/N))`; N=2, S=8 → main warms 03:02 (resets 08/13/18/23:00), claude2 05:32 (10:30/15:30/20:30/01:30). Warm-ups only at the 4 daily slots per account.
 - `pmset` needs sudo: cpool prints the command, never runs it.
 - Manual switch: `cpool switch` sets `sessions.<sid>.leave_manual = true`; the mod treats it as reason "manual"; the statusline clears it only when the session shows up on a different account.
+- Resume prompt (amended 2026-11-15): the mod used to never submit a prompt. It now submits exactly one: on `session.start` with `CPOOL_RESUMED` set, about 1.5 s in, `$.prompt.submit` sends the moved-accounts note (from/to, reason, each stopped subagent with its brief and report path, "redo the last turn" when the reason is `hard`).
 - Known limit: the mod acts only at `turn.complete` (main loop; subagent and engine-fork turns, i.e. `agentId` set, are ignored). A handoff whose file write failed retries on the next turn, so an idle headless session stalls until prompted.
 - Reasoning effort travels like the model: the statusline stores `sessions.<sid>.effort` (`effort.level`, left unchanged when absent), the mod writes it into the handoff (`null` if unknown), and `cpool run` pops `--effort` and relaunches with `--effort <handoff effort>`.
 - `cpool run` passes the router a state copy without the session's own record, so a session doesn't bias its current account (+10 affinity, −3 load).

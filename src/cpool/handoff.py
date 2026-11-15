@@ -27,7 +27,14 @@ def _path(run: str) -> Path:
 
 
 def write(h: dict) -> Path:
-    dest = _path(h["run"])
+    return _write(h, _path(h["run"]))
+
+
+def keep(h: dict, run: str, n: int) -> Path:
+    return _write(h, paths.handoff_dir() / "done" / f"{run}-{n}.json")
+
+
+def _write(h: dict, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=dest.name + ".tmp.")
     try:
@@ -43,6 +50,23 @@ def write(h: dict) -> Path:
             pass
         raise
     return dest
+
+
+def pending_agents(run: str) -> list[dict]:
+    try:
+        data = json.loads((paths.agents_dir() / f"{run}.json").read_text())
+        if not isinstance(data, dict) or data.get("version") != 1:
+            raise ValueError("not a version-1 agents object")
+        agents = data.get("agents")
+        if not isinstance(agents, dict) or not all(isinstance(a, dict) for a in agents.values()):
+            raise ValueError("invalid agents map")
+        return [{k: v for k, v in a.items() if k != "done"}
+                for a in agents.values() if not a.get("done")]
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as e:
+        journal.log("error", where="handoff.pending_agents", run=run, error=str(e))
+        return []
 
 
 def take(run: str) -> dict | None:

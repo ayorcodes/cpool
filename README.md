@@ -28,7 +28,11 @@ Headroom is weighted by plan size, so 30% left on a Max 5x account beats 60% lef
 
 ### Moving a session
 
-At the end of each turn the statusline checks whether the session should leave its account: 5-hour usage at the threshold, the next turn likely to cross 97%, or the model's weekly limit reached. If so, a small Claude Code plugin compacts the session on the current account (its cache is still warm, so this is cheap), writes a handoff file and exits. `cpool run` sees the file, picks the next account and runs `claude --resume` with the same session and model. The new account starts with the compacted summary, so the first turn there reads very little uncached context.
+At the end of each turn the statusline checks whether the session should leave its account: 5-hour usage at the threshold, the next turn likely to cross 97%, or the model's weekly limit reached. If so, a small Claude Code plugin compacts the session on the current account (its cache is still warm, so this is cheap) and writes a handoff file. `cpool run` sees the file, stops Claude Code (SIGTERM about 3 seconds later, SIGKILL 10 seconds after that), picks the next account and runs `claude --resume` with the same session and model. The new account starts with the compacted summary, so the first turn there reads very little uncached context.
+
+Subagents are tracked. While a top-level subagent is still running, a soft or manual leave waits; each finished subagent ends a main turn, and the check runs again. The statusline shows `leave deferred: N agents` in the meantime. A projected or model-limit leave doesn't wait, and neither does any leave once 5-hour usage reaches `hard` (97%). When the session moves with subagents unfinished, the handoff lists them. On the new account the plugin submits one prompt: it says which account the session moved from and why, and lists each stopped subagent with its description, type, model, report path and brief. The model reads each report that is complete and respawns the rest with the same brief, then carries on. Handoff files are kept under `~/.cpool/handoff/done/`.
+
+On a hard limit with no handoff file, `cpool run` resumes on another account without asking. Set `auto_hard = false` to get the `[Y/n]` prompt back.
 
 A session only leaves when another account can take it. If every other account is over its limits, the session stays put and the statusline records why in `leave_blocked`.
 
@@ -130,6 +134,8 @@ Set the role command to `cpool run --` and every role is routed through the pool
 start_hour = 8     # first reset of the first account
 soft = 85          # leave an account at this 5-hour %
 projected = 97     # or when the next turn would likely cross this
+# hard = 97         # leave even with subagents still running at this 5-hour %
+# auto_hard = true  # on a hard limit, resume elsewhere without asking
 weekly_soft = 90   # skip an account at this weekly %
 # burn_h = 5           # weekly % burned per hour of active use
 # duty = 0.4           # fraction of wall-clock time the pool is in use
