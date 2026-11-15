@@ -22,6 +22,10 @@ def handoff_dir() -> Path:
     return home() / "handoff"
 
 
+def agents_dir() -> Path:
+    return home() / "agents"
+
+
 def log_dir() -> Path:
     return home() / "log"
 

@@ -21,6 +21,8 @@ with open(rec, "a") as f:
                         "sigint": int(signal.getsignal(signal.SIGINT) != signal.SIG_IGN),
                         "sigquit": int(signal.getsignal(signal.SIGQUIT) != signal.SIG_IGN),
                         "next": os.environ.get("CPOOL_STATUSLINE_NEXT"),
+                        "resumed": os.environ.get("CPOOL_RESUMED"),
+                        "hard": os.environ.get("CPOOL_HARD"),
                         "env": {{k: v for k, v in os.environ.items()
                                  if k.startswith("ANTHROPIC_") or k == "CPOOL_SHARD"}}}}) + "\\n")
 n = sum(1 for _ in open(rec))
@@ -140,8 +142,8 @@ def test_handoff_rechecks_subscription(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(usage, "has_subscription", lambda acct: membership[acct.name])
     spawn = run._spawn
 
-    def launch(cmd, env):
-        code = spawn(cmd, env)
+    def launch(cmd, env, watch=None):
+        code = spawn(cmd, env, watch=watch)
         membership["b"] = False
         return code
 
@@ -173,7 +175,7 @@ def test_statusline_refresh_setting(tmp_path, monkeypatch, interval):
     path = home / "config.toml"
     path.write_text(path.read_text().replace("[pool]", f"[pool]\nstatusline_refresh_s = {interval}"))
     observed = []
-    def spawn(cmd, env):
+    def spawn(cmd, env, watch=None):
         settings = json.loads(Path(cmd[cmd.index("--settings") + 1]).read_text())
         observed.append(settings["statusLine"])
         return 0
@@ -185,10 +187,20 @@ def test_statusline_refresh_setting(tmp_path, monkeypatch, interval):
 
 def test_handoff_loop_relaunches_on_other_account(tmp_path, monkeypatch, shard_boundary):
     home = _setup(tmp_path, monkeypatch)
+    claude = tmp_path / "bin" / "claude"
+    claude.write_text(claude.read_text() + '''
+agents_file = os.path.join(home, "agents", os.environ["CPOOL_RUN"] + ".json")
+if n == 1:
+    with open(agents_file, "w") as f:
+        json.dump({"version": 1, "agents": {}, "deferred": 2}, f)
+else:
+    assert not os.path.exists(agents_file), "previous child's agents file survived"
+''')
     for key in tuple(os.environ):
         if key.startswith("ANTHROPIC_") or key == "CPOOL_SHARD":
             monkeypatch.delenv(key)
 
+    monkeypatch.setenv("CPOOL_RESUMED", "/stale")
     assert run.main(["--", "original prompt"]) == 0
 
     calls = _calls(home)
@@ -197,6 +209,12 @@ def test_handoff_loop_relaunches_on_other_account(tmp_path, monkeypatch, shard_b
     assert first["env"] == second["env"] == {}
     assert first["cfg"] == str(tmp_path / "a") and second["cfg"] == str(tmp_path / "b")
     assert first["run"] == second["run"]
+    assert first["resumed"] is None
+    assert first["hard"] == second["hard"] == "97"
+    kept = home / "handoff" / "done" / f"{first['run']}-1.json"
+    assert second["resumed"] == str(kept)
+    assert json.loads(kept.read_text())["session_id"] == "s1"
+    assert (home / "agents").is_dir()
     assert second["argv"].count("--resume") == 1
     assert "--effort" not in first["argv"]
     assert second["argv"].count("--effort") == 1
@@ -433,3 +451,35 @@ def test_automatic_handoff_respects_cooldown_and_says_why(tmp_path, monkeypatch,
     assert len(_calls(home)) == 1
     err = capsys.readouterr().err
     assert "b: cooldown until" in err and "a: current" in err and "earliest reset" not in err
+
+
+@pytest.mark.parametrize("ignore", [False, True])
+def test_spawn_stops_child_after_handoff(tmp_path, monkeypatch, ignore):
+    watch = tmp_path / "handoff.json"
+    monkeypatch.setattr(run, "HANDOFF_GRACE_S", 0.1)
+    monkeypatch.setattr(run, "KILL_AFTER_S", 0.1)
+    script = ("import signal,time; from pathlib import Path; "
+              + ("signal.signal(signal.SIGTERM, signal.SIG_IGN); " if ignore else "")
+              + f"Path({str(watch)!r}).touch(); time.sleep(30)")
+    start = time.monotonic()
+    code = run._spawn([sys.executable, "-c", script], dict(os.environ), watch=watch)
+    assert code == (-9 if ignore else -15)
+    assert 0.1 <= time.monotonic() - start < 3
+
+
+@pytest.mark.parametrize("auto,tty,prompt", [(True, True, False), (False, True, True), (False, False, False)])
+def test_hard_handoff_prompt_policy(tmp_path, monkeypatch, auto, tty, prompt):
+    _setup(tmp_path, monkeypatch)
+    with state.locked() as st:
+        st["accounts"]["a"]["five_hour"]["used"] = 100
+        st["sessions"]["s"] = {"run": "r", "account": "a", "updated_at": int(time.time()), "pid": os.getpid()}
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: tty)
+    answers = []
+    def answer(text):
+        answers.append(text)
+        return "y"
+    monkeypatch.setattr("builtins.input", answer)
+    h = run._hard_handoff("r", None, int(time.time()), auto)
+    assert bool(answers) is prompt
+    assert h["reason"] == "hard"
+    assert h["version"] == 1 and h["run"] == "r" and h["agents"] == []

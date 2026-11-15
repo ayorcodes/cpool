@@ -28,6 +28,8 @@ class Account:
 @dataclass(frozen=True)
 class Pool:
     start_hour: int = 8
+    hard: float = 97
+    auto_hard: bool = True
     soft: float = 85
     projected: float = 97
     weekly_soft: float = 90
@@ -98,6 +100,10 @@ def _parse_pool(raw: dict) -> Pool:
             raise ConfigError("pool.jitter_s must be [min, max] non-negative ints")
         kw["jitter_s"] = (j[0], j[1])
     for k, v in kw.items():
+        if k == "auto_hard":
+            if not isinstance(v, bool):
+                raise ConfigError("pool.auto_hard must be a bool")
+            continue
         if k != "jitter_s" and (isinstance(v, bool) or not isinstance(v, (int, float))):
             raise ConfigError(f"pool.{k} must be a number")
     for key, floor in (("live_poll_s", 30), ("statusline_refresh_s", 1)):
@@ -105,6 +111,8 @@ def _parse_pool(raw: dict) -> Pool:
         if not isinstance(value, int) or isinstance(value, bool) or (value != 0 and value < floor):
             raise ConfigError(f"pool.{key} must be 0 or an integer >= {floor}")
     pool = Pool(**kw)
+    if not 0 < pool.hard <= 100:
+        raise ConfigError("pool.hard must be > 0 and <= 100")
     if not pool.burn_h > 0:
         raise ConfigError("pool.burn_h must be > 0")
     if not 0 < pool.duty <= 1:

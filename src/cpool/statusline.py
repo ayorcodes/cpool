@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-from . import accounts, codex, config, journal, render, state, usage
+from . import accounts, codex, config, journal, paths, render, state, usage
 
 
 def _ancestor_claude_pid() -> int:
@@ -170,6 +170,20 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         journal.log("error", where="statusline.render", error=type(e).__name__, detail=str(e)[:200])
         lines = [_compact(payload, name)]
+    try:
+        run_id = os.environ.get("CPOOL_RUN")
+        sess = (state.read().get("sessions") or {}).get(payload.get("session_id")) or {}
+        if run_id and (sess.get("leave") or sess.get("leave_manual") is True):
+            data = json.loads((paths.agents_dir() / f"{run_id}.json").read_text())
+            deferred = data.get("deferred")
+            if not isinstance(deferred, int) or isinstance(deferred, bool):
+                raise ValueError("invalid deferred agent count")
+            if deferred > 0:
+                lines.append(f"leave deferred: {deferred} agent{'s' if deferred != 1 else ''}")
+    except FileNotFoundError:
+        pass
+    except Exception as e:  # noqa: BLE001
+        journal.log("error", where="statusline.deferred", error=type(e).__name__, detail=str(e)[:200])
     nxt = os.environ.get("CPOOL_STATUSLINE_NEXT")
     if nxt:
         try:
