@@ -118,6 +118,18 @@ main() {
 
     "$LINK" --help >/dev/null || die "installed cpool failed its smoke test ($LINK --help)."
 
+    for label in com.cpool.warm com.cpool.poll; do
+        plist="$HOME/Library/LaunchAgents/$label.plist"
+        if [ -f "$plist" ]; then
+            launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+            if launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null; then
+                echo "Reloaded launchd agent $label."
+            else
+                echo "warning: could not reload $label; run: cpool plan --apply" >&2
+            fi
+        fi
+    done
+
     echo ""
     echo "Installed: $LINK"
     echo "Next: cpool adopt ~/.claude --name main"

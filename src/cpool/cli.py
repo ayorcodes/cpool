@@ -355,7 +355,15 @@ def _cmd_doctor() -> int:
         out(False, f"state.json: {e}")
     agents = Path.home() / "Library" / "LaunchAgents"
     for label in (launchd.WARM, launchd.POLL):
-        out((agents / f"{label}.plist").exists(), f"launchd {label}")
+        if not (agents / f"{label}.plist").exists():
+            out(False, f"launchd {label}")
+            continue
+        problem = launchd.health(label)
+        out(
+            problem is None,
+            f"launchd {label}" if problem is None else
+            f"launchd {label}: {problem} (run: cpool plan --apply)",
+        )
     return 1 if bad else 0
 
 

@@ -98,6 +98,25 @@ def install(
     return plists
 
 
+def health(label: str) -> str | None:
+    result = subprocess.run(
+        ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return "not loaded"
+    lines = [line.strip() for line in result.stdout.splitlines()]
+    if "job state = spawn failed" in lines:
+        return "spawn failed"
+    for line in lines:
+        if line.startswith("last exit code = "):
+            code = line.removeprefix("last exit code = ")
+            if code != "0" and not code.startswith("(never"):
+                return f"last exit {code}"
+    return None
+
+
 def uninstall() -> None:
     domain = f"gui/{os.getuid()}"
     for label in (WARM, POLL):

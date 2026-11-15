@@ -1,8 +1,31 @@
 """launchd runs with a bare PATH; warm failed every time because it couldn't find `claude`."""
 from pathlib import Path
+from subprocess import CompletedProcess
+
+import pytest
 
 from cpool import launchd
 from cpool.config import Account, Config, Pool
+
+
+@pytest.mark.parametrize(
+    "returncode, stdout, expected",
+    [
+        (1, "", "not loaded"),
+        (0, "job state = spawn failed\nlast exit code = 78: EX_CONFIG", "spawn failed"),
+        (0, "last exit code = 0", None),
+        (0, "last exit code = (never exited)", None),
+        (0, "last exit code = 1", "last exit 1"),
+    ],
+)
+def test_health_reports_loaded_job_failures(monkeypatch, returncode, stdout, expected):
+    monkeypatch.setattr(
+        launchd.subprocess,
+        "run",
+        lambda *args, **kwargs: CompletedProcess(args[0], returncode, stdout, ""),
+    )
+
+    assert launchd.health(launchd.POLL) == expected
 
 
 def test_plists_put_claude_and_cpool_dirs_on_launchd_path(monkeypatch, tmp_path):
