@@ -312,6 +312,21 @@ def _cmd_doctor() -> int:
         return 1
     if cfg.shard.enabled:
         out(shard.probe(cfg.shard.url, shard.key()), f"shard proxy reachable: {cfg.shard.url}")
+        key = shardacct.get_key()
+        if not key:
+            out(False, "shard management key: absent (cpool shard mgmt-key set)")
+        else:
+            try:
+                cfg_json = shardacct.mgmt("/v0/management/config", key)
+                routing = cfg_json.get("routing") or {}
+                strategy = routing.get("strategy")
+                affinity = routing.get("session-affinity")
+                out(strategy == "fill-first", f"cliproxyapi routing.strategy: fill-first (is {strategy or 'unset'})")
+                out(affinity is True, f"cliproxyapi routing.session-affinity: true (is {affinity})")
+                if strategy != "fill-first" or affinity is not True:
+                    print("set these in the cliproxyapi config; cpool does not edit it")
+            except Exception as error:
+                out(False, f"shard management API: {error}")
     out(shutil.which("claude") is not None, "claude on PATH")
     for a in cfg.accounts:
         d = accounts.storage_dir(a)

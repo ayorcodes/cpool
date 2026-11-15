@@ -87,8 +87,9 @@ def test_shard_status_counts_live_shard_sessions(tmp_path, monkeypatch, capsys, 
     assert "secret" not in output
 
 
+@pytest.mark.parametrize("strategy,affinity,key", [("fill-first", True, "key"), ("round-robin", True, "key"), ("fill-first", False, "key"), ("fill-first", True, None)])
 @pytest.mark.parametrize("enabled,reachable", [(False, False), (True, False), (True, True)])
-def test_doctor_reports_shard_only_when_enabled(tmp_path, monkeypatch, capsys, enabled, reachable):
+def test_doctor_reports_shard_only_when_enabled(tmp_path, monkeypatch, capsys, enabled, reachable, strategy, affinity, key):
     monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
     config.save_shard(config.Shard(enabled))
     monkeypatch.setattr(shard, "probe", lambda url, key: reachable)
@@ -98,8 +99,17 @@ def test_doctor_reports_shard_only_when_enabled(tmp_path, monkeypatch, capsys, e
     agents.mkdir(parents=True)
     for label in (cli.launchd.WARM, cli.launchd.POLL):
         (agents / f"{label}.plist").touch()
-    assert cli.main(["doctor"]) == int(enabled and not reachable)
-    assert ("shard proxy" in capsys.readouterr().out) is enabled
+    monkeypatch.setattr(shardacct, "get_key", lambda: key)
+    monkeypatch.setattr(shardacct, "mgmt", lambda *args: {"routing": {"strategy": strategy, "session-affinity": affinity}})
+    assert cli.main(["doctor"]) == int(enabled and (not reachable or not key or strategy != "fill-first" or not affinity))
+    output = capsys.readouterr().out
+    assert ("shard proxy" in output) is enabled
+    if enabled and key:
+        assert ("✓ " if strategy == "fill-first" else "✗ ") + "cliproxyapi routing.strategy" in output
+        assert ("✓ " if affinity else "✗ ") + "cliproxyapi routing.session-affinity" in output
+        assert output.count("cpool does not edit it") == int(strategy != "fill-first" or not affinity)
+    elif enabled:
+        assert "✗ shard management key: absent" in output
 
 
 @pytest.mark.parametrize("source", ["env", "keychain", "absent"])
