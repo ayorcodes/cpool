@@ -43,6 +43,7 @@ def _plists(cfg: Config, cpool_bin: str) -> dict[str, dict]:
             "StartCalendarInterval": [
                 {"Hour": s.hour, "Minute": s.minute} for s in schedule.plan(cfg, state.read())
             ],
+            **({"StartInterval": 300} if cfg.pool.warm == "chain" else {}),
             "StandardOutPath": str(log / "warm.out"),
             "StandardErrorPath": str(log / "warm.err"),
         },

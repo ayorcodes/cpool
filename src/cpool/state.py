@@ -125,6 +125,17 @@ def _entry(st: dict, key: str, name: str) -> dict:
     return entries[name]
 
 
+def put_window(acct: dict, key: str, new: dict | None) -> None:
+    old = acct.get(key) or {}
+    if new is not None:
+        reset = old.get("resets_at")
+        if reset is not None and reset <= time.time() and reset != new.get("resets_at"):
+            new["prev_resets_at"] = reset
+        elif "prev_resets_at" in old:
+            new["prev_resets_at"] = old["prev_resets_at"]
+    acct[key] = new
+
+
 def account_state(st: dict, name: str) -> dict:
     return _entry(st, "accounts", name)
 

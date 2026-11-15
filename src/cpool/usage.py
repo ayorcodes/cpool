@@ -240,13 +240,16 @@ def poll(cfg: Config, now: int, *, due: bool = False) -> None:
             a = state.account_state(st, acct.name)
             if result is not None:
                 result["updated_at"] = now
+                for key in ("five_hour", "seven_day"):
+                    if key in result:
+                        state.put_window(a, key, result.pop(key))
                 a.update(result)
                 a["poll_backoff_until"] = None
                 a["poll_backoff_s"] = None
                 a["token_fp"] = None
                 journal.log("poll", account=acct.name, status=200,
-                            five_hour=result.get("five_hour", {}).get("used"),
-                            seven_day=result.get("seven_day", {}).get("used"))
+                            five_hour=(a.get("five_hour") or {}).get("used"),
+                            seven_day=(a.get("seven_day") or {}).get("used"))
                 continue
             status = err.status
             if status == 401:

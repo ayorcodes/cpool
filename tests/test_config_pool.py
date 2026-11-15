@@ -21,3 +21,25 @@ def test_invalid_hard_settings(tmp_path, monkeypatch, setting):
     (tmp_path / "config.toml").write_text(f"[pool]\n{setting}\n")
     with pytest.raises(config.ConfigError):
         config.load()
+
+
+def test_chain_settings_roundtrip(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("[pool]\n")
+    cfg = config.load(path)
+    assert (cfg.pool.strategy, cfg.pool.warm) == ("clock", "clock")
+    assert 'strategy =' not in config._dump(cfg)
+    assert 'warm =' not in config._dump(cfg)
+    path.write_text('[pool]\nstrategy = "chain"\nwarm = "chain"\n')
+    cfg = config.load(path)
+    path.write_text(config._dump(cfg))
+    assert config.load(path).pool == cfg.pool
+    assert 'strategy = "chain"' in path.read_text()
+
+
+@pytest.mark.parametrize("setting,key", [('warm = "x"', 'warm'), ('strategy = 1', 'strategy')])
+def test_invalid_chain_settings(tmp_path, setting, key):
+    path = tmp_path / "config.toml"
+    path.write_text(f"[pool]\n{setting}\n")
+    with pytest.raises(config.ConfigError, match=f"pool.{key}"):
+        config.load(path)

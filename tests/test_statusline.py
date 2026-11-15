@@ -137,3 +137,17 @@ def test_deferred_leave_status(tmp_path, monkeypatch, capsys, leave, leave_manua
         assert expected in out
     else:
         assert "leave deferred" not in out
+
+
+@pytest.mark.parametrize("key", ["five_hour", "seven_day"])
+def test_statusline_preserves_reset_rollover(tmp_path, monkeypatch, key):
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "a"))
+    monkeypatch.delenv("CPOOL_SHARD", raising=False)
+    monkeypatch.setattr(statusline.time, "time", lambda: 1000)
+    config.save_account(config.Account("a", tmp_path / "a", 1))
+    with state.locked() as st:
+        st["accounts"]["a"] = {key: {"used": 90, "resets_at": 900}}
+    statusline._record({"rate_limits": {key: {"used_percentage": 0, "resets_at": 2000}}})
+    assert state.read()["accounts"]["a"][key] == {
+        "used": 0, "resets_at": 2000, "prev_resets_at": 900}

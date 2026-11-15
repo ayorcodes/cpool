@@ -6,6 +6,8 @@ from statistics import median
 
 from .config import Config, Pool
 
+CHAIN_WEIGHT = 1000
+
 FAMILIES = ("opus", "sonnet", "haiku", "fable")
 
 
@@ -113,6 +115,8 @@ def score(
     s = (0.7 * (100 - u5h) + 0.25 * (100 - u7d)) * cap_ratio
     if reset5 is not None:
         h5 = (reset5 - now) / 3600
+        if pool.strategy == "chain":
+            s += CHAIN_WEIGHT * max(0.0, 1 - h5 / 5)
         s += pool.reset_weight * (100 - u5h) / 100 * max(0.0, 1 - h5 / 5)
     if reset7 is not None:
         f = min(1.0, max(0.0, 1 - (reset7 - now) / (7 * 86400)))

@@ -24,7 +24,9 @@ cpool keeps usage per account in `~/.cpool/state.json` from two sources:
 - the weekly limit for the model you asked for is reached
 - usage credits are turned on for it
 
-Headroom is weighted by plan size, so 30% left on a Max 5x account beats 60% left on a Pro account. An unused 5-hour window that is about to reset gets a bonus of up to 25 points, fading to nothing when the reset is two hours away, so usage gets spent before it disappears. The weekly window adds a pacing term of up to 15 points either way: an account behind its weekly pace is favoured, one ahead of it is held back. Inside 36 hours of its weekly reset, an account gets up to 100 points scaled by its unused weekly allowance, so allowance that would otherwise be lost gets used first. A session stays where it is unless another account is clearly better.
+Headroom is weighted by plan size, so 30% left on a Max 5x account beats 60% left on a Pro account. An unused 5-hour window that is about to reset gets a bonus of up to `reset_weight` (40) points, fading to nothing when the reset is five hours away, so usage gets spent before it disappears. The weekly window adds a pacing term of up to 15 points either way: an account behind its weekly pace is favoured, one ahead of it is held back. Inside 36 hours of its weekly reset, an account gets up to 100 points scaled by its unused weekly allowance, so allowance that would otherwise be lost gets used first. A session stays where it is unless another account is clearly better.
+
+With `strategy = "chain"`, a large bonus for an open 5-hour window that resets soon puts the soonest reset first among eligible accounts; the usual score matters only when resets are close. An account with no open window ranks after every account with one, so accounts fill one at a time.
 
 ### Moving a session
 
@@ -55,7 +57,9 @@ A 5-hour window starts at your first message, rounded down to the half hour. cpo
 | main | 03:02 | 08:00, 13:00, 18:00, 23:00 |
 | claude2 | 05:32 | 10:30, 15:30, 20:30 |
 
-A warm-up only runs when the account has no window open, so it never cuts a window short. The schedule runs from launchd. To have the Mac wake for the early ones, `cpool plan --apply` prints a `pmset` command for you to run with sudo.
+A warm-up only runs when the account has no window open, so it never cuts a window short.
+
+The fixed slots cover four windows (20 hours) a day. With `warm = "chain"`, cpool also re-warms each idle account within an hour of its own reset, all day, so each account's next window starts where the last one ended. The clock slots still seed an account that has dropped out of the chain. The schedule runs from launchd. To have the Mac wake for the early ones, `cpool plan --apply` prints a `pmset` command for you to run with sudo.
 
 ## Install
 
@@ -149,6 +153,8 @@ weekly_soft = 90   # skip an account at this weekly %
 # duty = 0.4           # fraction of wall-clock time the pool is in use
 # reset_weight = 40    # points for a 100%-unused 5h window just before reset
 # expiry_weight = 100  # points for 100% unused weekly allowance that cannot be spent before reset
+# strategy = "clock"   # or "chain": soonest 5h reset first
+# warm = "clock"       # or "chain": re-warm each idle account at its own reset
 margin = 10        # how much better another account must be to move
 cooldown_min = 5   # an account just left is skipped this long
 poll_min = 10

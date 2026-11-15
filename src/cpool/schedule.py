@@ -66,15 +66,19 @@ def due(cfg: Config, state: dict, now: datetime) -> list[str]:
     out: list[str] = []
     for a in sorted((a for a in cfg.accounts if a.enabled), key=lambda a: a.order):
         mine = [s for s in slots if s.account == a.name]
-        if not any(_recent(s, now) for s in mine):
-            continue
         st = accounts.get(a.name) or {}
+        window = st.get("five_hour") or {}
+        resets = window.get("resets_at")
+        last = resets if resets is not None and resets <= ts else window.get("prev_resets_at")
+        chain_recent = (cfg.pool.warm == "chain" and last is not None
+                        and 0 <= ts - last <= SLOT_GRACE_MIN * 60)
+        if not chain_recent and not any(_recent(s, now) for s in mine):
+            continue
         if st.get("auth") in UNWARMABLE_AUTH:
             continue
         started = st.get("warm_started_at")
         if started is not None and ts - started < WARM_INFLIGHT_S:
             continue
-        resets = (st.get("five_hour") or {}).get("resets_at")
         if resets is not None and resets > ts:
             continue
         failed = st.get("warm_failed_at")

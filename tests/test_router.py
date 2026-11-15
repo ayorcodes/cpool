@@ -130,3 +130,15 @@ def test_weekly_slack_bonus_prefers_allowance_that_cannot_be_spent_before_reset(
     assert d.account == "pro"
     assert d.scores["pro"] == pytest.approx(169.6)
     assert d.scores["main"] == pytest.approx(94.63174603174603)
+
+
+def test_chain_prioritizes_open_windows_by_reset():
+    from dataclasses import replace
+
+    c = replace(cfg(), pool=Pool(strategy="chain"))
+    sooner = acct(80, 80, five_hour={"used": 80, "resets_at": NOW + 3600})
+    later = acct(0, 0)
+    st = {"accounts": {"main": sooner, "pro": later}}
+    assert choose(st, c, model="opus", cwd="/w", now=NOW).account == "main"
+    st["accounts"]["pro"] = acct(five_hour=None)
+    assert choose(st, c, model="opus", cwd="/w", now=NOW).account == "main"

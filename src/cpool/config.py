@@ -27,6 +27,8 @@ class Account:
 
 @dataclass(frozen=True)
 class Pool:
+    strategy: str = "clock"
+    warm: str = "clock"
     start_hour: int = 8
     hard: float = 97
     auto_hard: bool = True
@@ -100,6 +102,10 @@ def _parse_pool(raw: dict) -> Pool:
             raise ConfigError("pool.jitter_s must be [min, max] non-negative ints")
         kw["jitter_s"] = (j[0], j[1])
     for k, v in kw.items():
+        if k in ("strategy", "warm"):
+            if v not in ("clock", "chain"):
+                raise ConfigError(f"pool.{k} must be clock or chain")
+            continue
         if k == "auto_hard":
             if not isinstance(v, bool):
                 raise ConfigError("pool.auto_hard must be a bool")
@@ -257,6 +263,8 @@ def _val(v) -> str:
 def _dump(cfg: Config) -> str:
     out = ["[pool]"]
     for f in fields(Pool):
+        if f.name in ("strategy", "warm") and getattr(cfg.pool, f.name) == f.default:
+            continue
         out.append(f"{f.name} = {_val(getattr(cfg.pool, f.name))}")
     for a in cfg.accounts:
         out += ["", "[[account]]", f"name = {_q(a.name)}", f"dir = {_q('default' if a.dir is None else str(a.dir))}",
