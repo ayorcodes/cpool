@@ -35,3 +35,13 @@ def test_install_only_limits_written_labels(monkeypatch, tmp_path):
     assert set(plists) == {launchd.WARM}
     assert any(launchd.WARM in str(c) for c in calls)
     assert all(launchd.POLL not in str(c) for c in calls)
+
+
+def test_chain_warm_adds_interval_without_removing_slots(tmp_path, monkeypatch):
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    accts = (Account("a0", Path("/x/0"), 1),)
+    clock = launchd.install(Config(Pool(), accts), "/x/cpool", dry_run=True)[launchd.WARM]
+    chain = launchd.install(Config(Pool(warm="chain"), accts), "/x/cpool", dry_run=True)[launchd.WARM]
+    assert "StartInterval" not in clock
+    assert chain["StartInterval"] == 300
+    assert chain["StartCalendarInterval"] == clock["StartCalendarInterval"]

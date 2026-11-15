@@ -387,3 +387,17 @@ def test_poll_429_after_403_and_relogin_keeps_doubling(tmp_path, monkeypatch):
     assert (a["poll_backoff_s"], a["poll_backoff_until"]) == (1200, 11_300)
     usage.poll(cfg, 10_200)
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("key", ["five_hour", "seven_day"])
+def test_poll_preserves_reset_rollover(tmp_path, monkeypatch, key):
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    monkeypatch.setattr(state.time, "time", lambda: 1000)
+    acct = config.Account("a", tmp_path / "a", 1)
+    with state.locked() as st:
+        st["accounts"]["a"] = {key: {"used": 90, "resets_at": 900}}
+    monkeypatch.setattr(usage, "fetch", lambda a: {key: {"used": 0, "resets_at": 2000}})
+    monkeypatch.setattr(shardorder, "sync", lambda *a: None)
+    usage.poll(config.Config(config.Pool(), (acct,)), 1000)
+    assert state.read()["accounts"]["a"][key] == {
+        "used": 0, "resets_at": 2000, "prev_resets_at": 900}

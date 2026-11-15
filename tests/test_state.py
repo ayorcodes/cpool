@@ -92,3 +92,19 @@ def test_wrong_shaped_state_does_not_block_writes(tmp_path, monkeypatch):
     data = json.loads(path.read_text())
     assert data["accounts"] == {"a": {"y": 2}, "b": {"x": 1}}
     assert list(data["sessions"]) == ["me"]
+
+
+@pytest.mark.parametrize("old,new,expected", [
+    ({"resets_at": 900}, {"resets_at": 2000}, {"resets_at": 2000, "prev_resets_at": 900}),
+    ({"resets_at": 2000, "prev_resets_at": 900}, {"resets_at": 2000},
+     {"resets_at": 2000, "prev_resets_at": 900}),
+    ({"resets_at": 2000}, {"resets_at": 3000}, {"resets_at": 3000}),
+    ({"resets_at": 900}, None, None),
+])
+def test_window_reset_history(monkeypatch, old, new, expected):
+    from cpool import state
+
+    monkeypatch.setattr(state.time, "time", lambda: 1000)
+    acct = {"five_hour": old}
+    state.put_window(acct, "five_hour", new)
+    assert acct["five_hour"] == expected

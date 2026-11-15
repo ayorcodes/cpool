@@ -121,3 +121,23 @@ def test_plan_with_state_skips_inactive_account():
 
 def test_plan_without_state_keeps_all_enabled():
     assert times(cfg(3), "a2")[0] == "06:02"
+
+
+def test_chain_due_uses_recent_reset_and_keeps_gates():
+    from dataclasses import replace
+
+    now = datetime(2026, 11, 2, 12, 0)
+    ts = now.timestamp()
+    c = replace(cfg(1), pool=Pool(warm="chain"))
+    st = {"accounts": {"a0": {"five_hour": {"resets_at": ts - 300}}}}
+    assert schedule.due(c, st, now) == ["a0"]
+    assert schedule.due(cfg(1), st, now) == []
+    st["accounts"]["a0"]["five_hour"] = {"resets_at": None, "prev_resets_at": ts - 300}
+    assert schedule.due(c, st, now) == ["a0"]
+    st["sessions"] = {"s": {"account": "a0", "updated_at": ts - 30}}
+    assert schedule.due(c, st, now) == []
+    st["sessions"] = {}
+    st["accounts"]["a0"]["five_hour"]["resets_at"] = ts + 300
+    assert schedule.due(c, st, now) == []
+    st["accounts"]["a0"]["five_hour"] = {"resets_at": ts - 3601}
+    assert schedule.due(c, st, now) == []

@@ -244,6 +244,8 @@ def _cmd_plan(apply: bool) -> int:
         print("no enabled accounts")
     for s in slots:
         print(f"{s.account}: warm {s.hour:02d}:{s.minute:02d}, resets {' '.join(_resets(s))}")
+    if cfg.pool.warm == "chain":
+        print("chain: re-warms each idle account at its own reset (checked every 5 min)")
     live = {a.name for a in schedule.active(cfg, st)}
     idle = [a.name for a in cfg.accounts if a.enabled and a.name not in live]
     if idle:

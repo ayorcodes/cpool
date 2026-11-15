@@ -80,9 +80,9 @@ def _record(payload: dict) -> str | None:
         five = five if _fresher(a.get("five_hour"), five, now) else None
         seven = seven if _fresher(a.get("seven_day"), seven, now) else None
         if five:
-            a["five_hour"] = five
+            state.put_window(a, "five_hour", five)
         if seven:
-            a["seven_day"] = seven
+            state.put_window(a, "seven_day", seven)
         if five or seven:
             a.update(source="statusline", updated_at=now, auth="ok")
         if isinstance(sid, str) and sid:
