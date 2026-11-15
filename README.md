@@ -38,6 +38,14 @@ A session only leaves when another account can take it. If every other account i
 
 `cpool switch` asks the current session to move at the end of its next turn.
 
+### Shard mode
+
+With `[shard] enabled = true`, requests go through a cliproxyapi proxy instead of a single account. cpool makes the proxy fill one account at a time, in chain order. Subagents then share the main session's account and its prompt cache, and only one 5-hour window opens at a time.
+
+- cliproxyapi must run with `routing.strategy: fill-first` and `routing.session-affinity: true`. `cpool doctor` reads both through the management API and fails if either is missing. cpool never edits the cliproxyapi config.
+- Each poll (the poller, and at most once a minute from the statusline) ranks the accounts: eligible ones by 5-hour reset, soonest first, then by score, and ineligible ones last. It sets each Claude auth file's `priority` to `100 - rank`, matching files to accounts by email. It sends nothing when the order hasn't changed, and journals `shard-order` when it has.
+- This needs the management key: `cpool shard mgmt-key set` stores it in the Keychain. A key the proxy rejects isn't retried until you set a new one.
+
 ### Staggered windows
 
 A 5-hour window starts at your first message, rounded down to the half hour. cpool can start each account's window early with a one-word Haiku call so the resets land at times you choose. With `start_hour = 8` and two accounts:

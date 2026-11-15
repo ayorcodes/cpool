@@ -8,7 +8,22 @@ from pathlib import Path
 
 import pytest
 
-from cpool import accounts, config, router, state, statusline, usage
+from cpool import accounts, config, router, shardorder, state, statusline, usage
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_poll_sync_is_best_effort(tmp_path, monkeypatch, raises):
+    """Polling must reach priority sync without making management outages fatal."""
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    cfg = config.Config(config.Pool(), ())
+    calls = []
+    def sync(cfg, now):
+        calls.append(now)
+        if raises:
+            raise RuntimeError("offline")
+    monkeypatch.setattr(shardorder, "sync", sync)
+    usage.poll(cfg, 1000)
+    assert calls == [1000]
 
 FIX = Path(__file__).parent / "fixtures"
 

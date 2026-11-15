@@ -14,7 +14,7 @@ import urllib.request
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from . import config, paths, state
 
@@ -115,8 +115,42 @@ def _save(cache: Cache) -> None:
             os.unlink(temp)
 
 
+def mgmt(path: str, key: str, *, method="GET", body: dict | None = None,
+         timeout: float = 2.0) -> Any:
+    base = config.load().shard.url.rstrip("/").removesuffix("/v1")
+    headers = {"Authorization": f"Bearer {key}"}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(base + path, data=data, headers=headers, method=method)
+    # Redirects must not forward the management credential to another endpoint.
+    opener = urllib.request.OpenerDirector()
+    opener.add_handler(urllib.request.HTTPHandler())
+    opener.add_handler(urllib.request.HTTPSHandler())
+    opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
+    opener.add_handler(urllib.request.HTTPErrorProcessor())
+    with opener.open(request, timeout=timeout) as response:
+        raw = response.read()
+    return json.loads(raw) if raw else None
+
+
+def entries(raw: object) -> list:
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict):
+        for value in raw.values():
+            if isinstance(value, list):
+                return value
+    raise ValueError("invalid auth-files response")
+
+
+def key_fp(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
 def _fetch(key: str, now: float, previous: Cache) -> Cache:
-    fp = hashlib.sha256(key.encode()).hexdigest()[:12]
+    fp = key_fp(key)
     failures = previous["failures"] if previous["key_fp"] == fp else 0
     rejected = [value for value in previous["rejected_fps"] if value != fp]
     result = Cache(at=now, key_fp=fp, rejected_fps=(rejected + [fp])[-8:],
@@ -126,20 +160,8 @@ def _fetch(key: str, now: float, previous: Cache) -> Cache:
     _rejected.intersection_update(result["rejected_fps"])
     _rejected.add(fp)
     try:
-        base = config.load().shard.url.rstrip("/").removesuffix("/v1")
-        request = urllib.request.Request(base + "/v0/management/auth-files",
-                                         headers={"Authorization": f"Bearer {key}"})
-        # Redirects must not forward the management credential to another endpoint.
-        opener = urllib.request.OpenerDirector()
-        opener.add_handler(urllib.request.HTTPHandler())
-        opener.add_handler(urllib.request.HTTPSHandler())
-        opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
-        opener.add_handler(urllib.request.HTTPErrorProcessor())
-        with opener.open(request, timeout=1.0) as response:
-            raw = json.load(response)
-        entries = raw if isinstance(raw, list) else next(
-            (value for value in raw.values() if isinstance(value, list)), []) if isinstance(raw, dict) else []
-        for entry in entries:
+        raw = mgmt("/v0/management/auth-files", key, timeout=1.0)
+        for entry in entries(raw):
             if not isinstance(entry, dict):
                 continue
             index = entry.get("auth_index")
@@ -165,7 +187,7 @@ def auth_emails(now: float) -> dict[str, str] | None:
     key = get_key()
     if not key:
         return None
-    fp = hashlib.sha256(key.encode()).hexdigest()[:12]
+    fp = key_fp(key)
     try:
         paths.home().mkdir(parents=True, exist_ok=True)
         with (paths.home() / "shard-auths.lock").open("a") as lock:

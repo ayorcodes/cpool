@@ -14,7 +14,7 @@ import urllib.request
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 
-from . import __version__, accounts, journal, paths, state
+from . import __version__, accounts, journal, paths, shardorder, state
 from .config import Account, Config
 
 URL = "https://api.anthropic.com/api/oauth/usage"
@@ -263,6 +263,10 @@ def poll(cfg: Config, now: int, *, due: bool = False) -> None:
                 a["poll_backoff_until"] = now + a["poll_backoff_s"]
                 a["token_fp"] = None
             journal.log("poll", account=acct.name, status=status, error=str(err))
+    try:
+        shardorder.sync(cfg, now)
+    except Exception as e:
+        journal.log("shard-order-error", stage="poll", error=type(e).__name__, status=None)
 
 
 def poll_daemon(cfg: Config) -> int:

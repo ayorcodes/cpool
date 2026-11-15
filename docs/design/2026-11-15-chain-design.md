@@ -110,9 +110,15 @@ only one 5-hour window opens at a time.
   through `shardacct.account_emails`.
 - They skip the PATCH when the order hasn't changed and journal
   `shard-order`.
-- Unverified (spike): whether fill-first picks the highest priority first or
-  the file order; how `quota-exceeded` cooldown ends at a 5-hour reset; the
-  management key and auth header.
+- Settled by Checks item 5. As built:
+  - doctor reads `routing` from `GET /v0/management/config`, not the
+    config file;
+  - the sync runs at the end of `usage.poll`, which the statusline already
+    reaches through `usage.kick` (once per `live_poll_s`);
+  - the key is the existing `cpool shard mgmt-key` Keychain item, with no
+    new command;
+  - the last applied priorities are kept in `~/.cpool/shard-order.json`, and
+    a key that got a 401 or 403 is not retried.
 
 ## Part 3: chain view
 

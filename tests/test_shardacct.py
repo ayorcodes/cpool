@@ -189,3 +189,17 @@ def test_default_account_email(sandbox, monkeypatch):
     (root / ".claude.json").write_text('{"oauthAccount":{"emailAddress":"DEFAULT@EXAMPLE.COM"}}')
     cfg = config.Config(config.Pool(), (config.Account("default", None, 0),))
     assert shardacct.account_emails(cfg) == {"default@example.com": "default"}
+
+
+@pytest.mark.parametrize("body", [b"", b"null", b'"invalid"', b"42", b"{}"])
+def test_invalid_auth_response_takes_down_backoff(sandbox, body):
+    root, http = sandbox
+    http.side_effect = lambda *args, **kwargs: io.BytesIO(body)
+    assert shardacct.auth_emails(100) is None
+    assert shardacct.auth_emails(159) is None
+    assert http.call_count == 1
+    assert shardacct.auth_emails(160) is None
+    assert http.call_count == 2
+    cache = json.loads((root / "shard-auths.json").read_text())
+    assert cache["error"] == "down"
+    assert cache["map"] == {}
