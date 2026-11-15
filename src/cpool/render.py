@@ -1,10 +1,12 @@
 """Shared account usage display, independent of terminal and state I/O."""
 from __future__ import annotations
 
+import math
 import os
+import time
 from typing import Literal, TextIO
 
-from . import router, shardacct, state
+from . import chain, router, shardacct, state
 from .config import Config
 from .codex import Snapshot
 
@@ -62,6 +64,35 @@ def until(resets_at: int | None, now: int) -> str:
         return f"{RESET}{h}h"
     d, h = divmod(h, 24)
     return f"{RESET}{d}d{h}h"
+
+
+def pool_line(cfg: Config, st: dict, now: int, *, color: bool) -> str | None:
+    outlook = chain.summary(cfg, st, now)
+    if outlook is None:
+        return None
+    ready = min(16, max(0, round(outlook.room_ready / outlook.total * 16))) if outlook.total else 0
+    waiting = min(16 - ready, max(0, round((outlook.room - outlook.room_ready) / outlook.total * 16))) if outlook.total else 0
+    cells = "█" * ready + "▓" * waiting + "░" * (16 - ready - waiting)
+    parts = [f"pool {cells} {outlook.room:.1f}/{outlook.total:g}"]
+    if outlook.runway_s is not None:
+        duration = until(now + math.ceil(outlook.runway_s), now).removeprefix(RESET)
+        if "h" in duration and duration.endswith("m"):
+            duration = duration[:-1]
+        parts.append(f"runway {duration or '0m'}")
+    if outlook.next_at is not None:
+        clock = time.strftime("%H:%M", time.localtime(outlook.next_at))
+        parts.append(f"next +{outlook.next_gain:.1f} {outlook.next_account} {clock}")
+        if outlook.seamless:
+            parts.append("seamless")
+        elif outlook.gap_at is not None:
+            clock = time.strftime("%H:%M", time.localtime(outlook.gap_at))
+            parts.append(f"gap ~{round(outlook.gap_s / 60)}m at {clock}")
+    weekly = f"wk {outlook.week_used:.0f}%"
+    if outlook.week_delta is not None and abs(outlook.week_delta) >= 1:
+        delta = outlook.week_delta
+        weekly += f" {'+' if delta > 0 else '−'}{abs(delta):.0f} {'ahead' if delta > 0 else 'behind'}"
+    parts.append(weekly)
+    return paint(" · ", DIM, on=color).join(parts)
 
 
 def window_cell(acct: dict, key: str, now: int, *, color: bool) -> str:

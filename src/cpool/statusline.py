@@ -167,6 +167,12 @@ def main() -> int:
             lines.append(render.codex_line(snap, now, name_width=name_width, color=color))
         if not lines:
             lines = [_compact(payload, name)]
+        try:
+            pool = render.pool_line(cfg, st, now, color=color)
+            if pool is not None:
+                lines.append(pool)
+        except Exception as e:  # noqa: BLE001
+            journal.log("error", where="statusline.pool", error=type(e).__name__, detail=str(e)[:200])
     except Exception as e:  # noqa: BLE001
         journal.log("error", where="statusline.render", error=type(e).__name__, detail=str(e)[:200])
         lines = [_compact(payload, name)]
