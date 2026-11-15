@@ -7,11 +7,11 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 
-from . import accounts, advisor, codex, config, journal, launchd, mirror, render, router, schedule, shard, shardacct, state, usage, warm
+from . import accounts, advisor, chain, codex, config, journal, launchd, mirror, render, router, schedule, shard, shardacct, state, usage, warm
 
 
 class CliError(Exception):
@@ -162,7 +162,9 @@ def _cmd_status(as_json: bool) -> int:
     dec = router.choose(st, cfg, model="", cwd=os.getcwd(), now=now)
     snap = codex.snapshot(now)
     if as_json:
+        outlook = chain.summary(cfg, st, now)
         print(json.dumps({"accounts": rows, "codex": snap,
+                          "pool": asdict(outlook) if outlook is not None else None,
                           "next": {"account": dec.account, "reason": dec.reason}}, indent=2))
         return 0
     color = render.color_enabled(sys.stdout)
@@ -196,6 +198,9 @@ def _cmd_status(as_json: bool) -> int:
         print(line + " " * (gutter - len(plain)) + render.paint(tail, render.DIM, on=color))
     if snap is not None:
         print(render.codex_line(snap, now, name_width=name_width, color=color))
+    pool = render.pool_line(cfg, st, now, color=color)
+    if pool is not None:
+        print(pool)
     pick = render.paint(dec.account or "none", render.BOLD, on=color and dec.account is not None)
     print(render.paint("→ next:", render.DIM, on=color) + f" {pick} " + render.paint(f"({dec.reason})", render.DIM, on=color))
     return 0

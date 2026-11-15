@@ -7,6 +7,26 @@ from collections import Counter
 from cpool import config, render, shardacct, state
 
 
+def test_pool_line_outlook_and_omissions(monkeypatch):
+    import time
+    monkeypatch.setattr(render.time, "localtime", lambda ts: time.gmtime(ts))
+    cfg = config.Config(config.Pool(), (config.Account("a", None, 0),))
+    st = {"accounts": {"a": {"updated_at": 1000, "credits_enabled": False,
+          "five_hour": {"used": 40, "resets_at": 4600},
+          "seven_day": {"used": 60, "resets_at": 303400}}},
+          "sessions": {"s": {"account": "a", "updated_at": 1000, "turns": [
+              {"ts": 100, "u5h": 10}, {"ts": 400, "u5h": 20}, {"ts": 700, "u5h": 30}]}}}
+    assert render.pool_line(cfg, st, 1000, color=False) == (
+        "pool ██████████░░░░░░ 0.6/1 · runway 30m · next +0.4 a 01:16 · gap ~30m at 00:46 · wk 60% +10 ahead")
+    st["sessions"] = {}
+    st["accounts"]["a"]["five_hour"] = {}
+    assert render.pool_line(cfg, st, 1000, color=False) == "pool ████████████████ 1.0/1 · wk 60% +10 ahead"
+    st["accounts"]["a"]["left_at"] = 999
+    assert "▓" * 16 in render.pool_line(cfg, st, 1000, color=False)
+    assert render.pool_line(cfg, {}, 1000, color=False) is None
+
+
+
 @pytest.fixture(autouse=True)
 def isolated_shard_environment(monkeypatch):
     monkeypatch.delenv("CPOOL_SHARD", raising=False)

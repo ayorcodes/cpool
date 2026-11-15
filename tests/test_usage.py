@@ -282,7 +282,8 @@ def test_statusline_writes_state(tmp_path, monkeypatch, capsys):
     assert s["effort"] == "high"
     assert s["cache"] == {"read": 3, "created": 1} and s["turns"][0]["u5h"] == 40.0
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 2
+    assert len(lines) == 3
+    assert lines[2].startswith("pool ")
     assert lines[0].startswith("▸ a  ●          1  5h ▰▰▰▱▱▱▱▱  40% ↻")
     assert "7d ▰▱▱▱▱▱▱▱  11% ↻" in lines[0]
     assert lines[1] == "  b  ·          0  5h ▰▰▰▰▰▰▱▱  72% ↻1h00m  7d ▱▱▱▱▱▱▱▱   0%"

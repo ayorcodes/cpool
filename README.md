@@ -48,6 +48,20 @@ With `[shard] enabled = true`, requests go through a cliproxyapi proxy instead o
 - Each poll (the poller, and at most once a minute from the statusline) ranks the accounts: eligible ones by 5-hour reset, soonest first, then by score, and ineligible ones last. It sets each Claude auth file's `priority` to `100 - rank`, matching files to accounts by email. It sends nothing when the order hasn't changed, and journals `shard-order` when it has.
 - This needs the management key: `cpool shard mgmt-key set` stores it in the Keychain. A key the proxy rejects isn't retried until you set a new one.
 
+### The pool line
+
+The statusline and `cpool status` end with one line for the whole pool:
+
+```
+pool ██████████▓▓▓░░░ 2.1/3 · runway 4h10 · next +0.6 claude2 10:30 · seamless · wk 42% +5 ahead
+```
+
+- The bar and `2.1/3` show the 5-hour room left, in whole windows weighted by plan size. `█` is room on accounts that can take work now, `▓` is room on accounts at a limit or in cooldown.
+- `runway` is that room divided by the current burn (the median per-hour rise in 5-hour usage over recent turns of live sessions).
+- `next` is the soonest reset and how much room it gives back.
+- `seamless` means the runway lasts until that reset; otherwise the line shows the expected gap.
+- `wk` is pooled weekly usage and how far it is ahead of or behind the weekly pace.
+
 ### Staggered windows
 
 A 5-hour window starts at your first message, rounded down to the half hour. cpool can start each account's window early with a one-word Haiku call so the resets land at times you choose. With `start_hour = 8` and two accounts:
