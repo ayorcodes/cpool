@@ -163,11 +163,12 @@ def main() -> int:
         name_width = max(4, max((len(a.name) for a in cfg.accounts if a.enabled), default=0))
         if snap is not None:
             name_width = max(len("codex"), name_width)
+        folded = paths.folded()
         lines = render.account_lines(cfg, st, active.name if active else None, now,
-                                     color=color, min_width=name_width)
-        if lines and snap is not None:
+                                     color=color, min_width=name_width, folded=folded)
+        if lines and snap is not None and not folded:
             lines.append(render.codex_line(snap, now, name_width=name_width, color=color))
-        if not lines:
+        if not lines and not folded:
             lines = [_compact(payload, name)]
         try:
             lines.extend(render.pool_lines(cfg, st, now, name_width=name_width, color=color))

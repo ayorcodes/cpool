@@ -50,6 +50,8 @@ With `[shard] enabled = true`, requests go through a cliproxyapi proxy instead o
 
 ### The pool rows
 
+Account rows are folded to the active account by default. `cpool unfold` shows all account rows; `cpool fold` hides inactive rows again. The statusline picks up the change on its next refresh. `cpool status -a` shows all rows once.
+
 The statusline and `cpool status` end with two rows for the whole pool, under the account rows:
 
 ```
