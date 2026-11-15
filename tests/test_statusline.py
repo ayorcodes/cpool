@@ -63,8 +63,7 @@ def test_statusline_route_preserves_account_usage(tmp_path, monkeypatch, capsys,
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode())))
     assert statusline.main() == 0
     output = capsys.readouterr().out.splitlines()
-    assert output[-1].startswith("pool ")
-    account_output = "\n".join(output[:-1]) + "\n"
+    account_output = "\n".join(output) + "\n"
     st = state.read()
     if shard:
         assert st["accounts"]["a"] == stored
@@ -72,7 +71,7 @@ def test_statusline_route_preserves_account_usage(tmp_path, monkeypatch, capsys,
         assert st["sessions"]["s1"]["turns"] == []
         assert account_output == (
             "⇄ shard 1 · …×1\n"
-            "  a  ·          0  5h ▰▰▱▱▱▱▱▱  25% ↻1h00m  7d ▰▰▰▰▱▱▱▱  50% ↻1d0h  ⚠ expired\n")
+            "  a     ·          0  5h ▰▰▱▱▱▱▱▱  25% ↻1h00m  7d ▰▰▰▰▱▱▱▱  50% ↻1d0h  ⚠ expired\n")
     else:
         assert st["accounts"]["a"] == {
             "five_hour": {"used": 30, "resets_at": 4600},
@@ -81,7 +80,7 @@ def test_statusline_route_preserves_account_usage(tmp_path, monkeypatch, capsys,
         assert not st["sessions"]["s1"].get("shard")
         assert st["sessions"]["s1"]["turns"] == [{"ts": 1000, "u5h": 30}]
         assert account_output == (
-            "▸ a  ●          1  5h ▰▰▱▱▱▱▱▱  30% ↻1h00m  7d ▰▰▰▰▰▱▱▱  60% ↻1d0h\n")
+            "▸ a     ●          1  5h ▰▰▱▱▱▱▱▱  30% ↻1h00m  7d ▰▰▰▰▰▱▱▱  60% ↻1d0h\n")
     session = st["sessions"]["s1"]
     assert (session["account"], session["run"], session["pid"], session["cwd"], session["model"],
             session["effort"], session["updated_at"], session["started_at"], session["ctx_used"], session["cache"]) == (

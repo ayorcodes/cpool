@@ -171,6 +171,7 @@ def _cmd_status(as_json: bool) -> int:
     active = accounts.resolve_account(cfg, os.environ.get("CLAUDE_CONFIG_DIR"))
     name_width = max(len("codex") if snap is not None else 0,
                      max((len(r["name"]) for r in rows), default=0))
+    name_width = max(name_width, 4)
     stored = st.get("accounts") or {}
     header, serving = render.shard_header(cfg, st, now)
     if header is not None:
@@ -198,9 +199,8 @@ def _cmd_status(as_json: bool) -> int:
         print(line + " " * (gutter - len(plain)) + render.paint(tail, render.DIM, on=color))
     if snap is not None:
         print(render.codex_line(snap, now, name_width=name_width, color=color))
-    pool = render.pool_line(cfg, st, now, color=color)
-    if pool is not None:
-        print(pool)
+    for line in render.pool_lines(cfg, st, now, name_width=name_width, color=color):
+        print(line)
     pick = render.paint(dec.account or "none", render.BOLD, on=color and dec.account is not None)
     print(render.paint("→ next:", render.DIM, on=color) + f" {pick} " + render.paint(f"({dec.reason})", render.DIM, on=color))
     return 0

@@ -66,33 +66,35 @@ def until(resets_at: int | None, now: int) -> str:
     return f"{RESET}{d}d{h}h"
 
 
-def pool_line(cfg: Config, st: dict, now: int, *, color: bool) -> str | None:
+def pool_lines(cfg: Config, st: dict, now: int, *, name_width: int, color: bool) -> list[str]:
     outlook = chain.summary(cfg, st, now)
-    if outlook is None:
-        return None
-    ready = min(16, max(0, round(outlook.room_ready / outlook.total * 16))) if outlook.total else 0
-    waiting = min(16 - ready, max(0, round((outlook.room - outlook.room_ready) / outlook.total * 16))) if outlook.total else 0
-    cells = "█" * ready + "▓" * waiting + "░" * (16 - ready - waiting)
-    parts = [f"pool {cells} {outlook.room:.1f}/{outlook.total:g}"]
+    if outlook is None or outlook.total == 0:
+        return []
+    used5 = max(0, min(100, 100 * (1 - outlook.room / outlook.total)))
+    title = paint(f"{'pool':<{name_width}}", DIM, on=color)
+    prefix = f"  {title}{SEPARATOR}{' ' * 8}{' ' * 4}{SEPARATOR}"
+    cells = [usage_cell("5h", used5, None, now, color=color),
+             usage_cell("7d", outlook.week_used, None, now, color=color)]
+    parts = []
     if outlook.runway_s is not None:
         duration = until(now + math.ceil(outlook.runway_s), now).removeprefix(RESET)
         if "h" in duration and duration.endswith("m"):
             duration = duration[:-1]
-        parts.append(f"runway {duration or '0m'}")
+        parts.append(f"lasts ~{duration or '0m'}")
     if outlook.next_at is not None:
         clock = time.strftime("%H:%M", time.localtime(outlook.next_at))
-        parts.append(f"next +{outlook.next_gain:.1f} {outlook.next_account} {clock}")
-        if outlook.seamless:
-            parts.append("seamless")
-        elif outlook.gap_at is not None:
-            clock = time.strftime("%H:%M", time.localtime(outlook.gap_at))
-            parts.append(f"gap ~{round(outlook.gap_s / 60)}m at {clock}")
-    weekly = f"wk {outlook.week_used:.0f}%"
-    if outlook.week_delta is not None and abs(outlook.week_delta) >= 1:
-        delta = outlook.week_delta
-        weekly += f" {'+' if delta > 0 else '−'}{abs(delta):.0f} {'ahead' if delta > 0 else 'behind'}"
-    parts.append(weekly)
-    return paint(" · ", DIM, on=color).join(parts)
+        parts.append(f"next reset {outlook.next_account} {clock}")
+        if outlook.runway_s is not None:
+            if outlook.seamless:
+                parts.append("no gap")
+            elif outlook.gap_at is not None:
+                clock = time.strftime("%H:%M", time.localtime(outlook.gap_at))
+                parts.append(f"gap ~{round(outlook.gap_s / 60)}m at {clock}")
+    indent = " " * (2 + name_width + len(SEPARATOR) + 12 + len(SEPARATOR))
+    rows = [(prefix + SEPARATOR.join(cells)).rstrip()]
+    if parts:
+        rows.append(indent + paint(" · ".join(parts), DIM, on=color))
+    return rows
 
 
 def window_cell(acct: dict, key: str, now: int, *, color: bool) -> str:

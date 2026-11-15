@@ -7,7 +7,7 @@ from collections import Counter
 from cpool import config, render, shardacct, state
 
 
-def test_pool_line_outlook_and_omissions(monkeypatch):
+def test_pool_lines_outlook_and_omissions(monkeypatch):
     import time
     monkeypatch.setattr(render.time, "localtime", lambda ts: time.gmtime(ts))
     cfg = config.Config(config.Pool(), (config.Account("a", None, 0),))
@@ -16,14 +16,27 @@ def test_pool_line_outlook_and_omissions(monkeypatch):
           "seven_day": {"used": 60, "resets_at": 303400}}},
           "sessions": {"s": {"account": "a", "updated_at": 1000, "turns": [
               {"ts": 100, "u5h": 10}, {"ts": 400, "u5h": 20}, {"ts": 700, "u5h": 30}]}}}
-    assert render.pool_line(cfg, st, 1000, color=False) == (
-        "pool ██████████░░░░░░ 0.6/1 · runway 30m · next +0.4 a 01:16 · gap ~30m at 00:46 · wk 60% +10 ahead")
+    rows = render.pool_lines(cfg, st, 1000, name_width=4, color=False)
+    assert rows == [
+        "  pool                5h ▰▰▰▱▱▱▱▱  40%         7d ▰▰▰▰▰▱▱▱  60%",
+        "                      lasts ~30m · next reset a 01:16 · gap ~30m at 00:46",
+    ]
+    account = render.account_line("a", st["accounts"]["a"], 1000, active=True, name_width=4, color=False)
+    assert rows[0].index("5h") == account.index("5h")
+    st["accounts"]["a"]["five_hour"]["resets_at"] = 2000
+    assert render.pool_lines(cfg, st, 1000, name_width=4, color=False)[1].endswith("no gap")
     st["sessions"] = {}
     st["accounts"]["a"]["five_hour"] = {}
-    assert render.pool_line(cfg, st, 1000, color=False) == "pool ████████████████ 1.0/1 · wk 60% +10 ahead"
+    assert render.pool_lines(cfg, st, 1000, name_width=4, color=False) == [
+        "  pool                5h ▱▱▱▱▱▱▱▱   0%         7d ▰▰▰▰▰▱▱▱  60%",
+    ]
     st["accounts"]["a"]["left_at"] = 999
-    assert "▓" * 16 in render.pool_line(cfg, st, 1000, color=False)
-    assert render.pool_line(cfg, {}, 1000, color=False) is None
+    assert render.pool_lines(cfg, st, 1000, name_width=4, color=False) == [
+        "  pool                5h ▱▱▱▱▱▱▱▱   0%         7d ▰▰▰▰▰▱▱▱  60%",
+    ]
+    assert render.pool_lines(cfg, {}, 1000, name_width=4, color=False) == []
+    st["accounts"]["a"]["auth"] = "expired"
+    assert render.pool_lines(cfg, st, 1000, name_width=4, color=False) == []
 
 
 
