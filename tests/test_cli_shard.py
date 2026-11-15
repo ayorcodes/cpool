@@ -99,6 +99,7 @@ def test_doctor_reports_shard_only_when_enabled(tmp_path, monkeypatch, capsys, e
     agents.mkdir(parents=True)
     for label in (cli.launchd.WARM, cli.launchd.POLL):
         (agents / f"{label}.plist").touch()
+    monkeypatch.setattr(cli.launchd, "health", lambda label: None)
     monkeypatch.setattr(shardacct, "get_key", lambda: key)
     monkeypatch.setattr(shardacct, "mgmt", lambda *args: {"routing": {"strategy": strategy, "session-affinity": affinity}})
     assert cli.main(["doctor"]) == int(enabled and (not reachable or not key or strategy != "fill-first" or not affinity))
