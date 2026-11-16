@@ -7,7 +7,6 @@ from .config import Account, Config
 
 WINDOW_MIN = 300
 SLOT_GRACE_MIN = 60
-SESSION_LIVE_S = 120
 WARM_RETRY_MIN = 15
 WARM_INFLIGHT_S = 150
 UNWARMABLE_AUTH = ("no-plan", "missing")
@@ -61,7 +60,6 @@ def due(cfg: Config, state: dict, now: datetime) -> list[str]:
         now = now.astimezone().replace(tzinfo=None)
     ts = now.timestamp()
     accounts = state.get("accounts") or {}
-    sessions = state.get("sessions") or {}
     slots = plan(cfg, state)
     out: list[str] = []
     for a in sorted((a for a in cfg.accounts if a.enabled), key=lambda a: a.order):
@@ -86,12 +84,6 @@ def due(cfg: Config, state: dict, now: datetime) -> list[str]:
             continue
         warmed = st.get("warmed_at")
         if warmed is not None and ts - warmed < SLOT_GRACE_MIN * 60:
-            continue
-        if any(
-            (s or {}).get("account") == a.name
-            and ts - ((s or {}).get("updated_at") or 0) < SESSION_LIVE_S
-            for s in sessions.values()
-        ):
             continue
         out.append(a.name)
     return out
