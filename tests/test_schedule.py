@@ -47,11 +47,9 @@ def test_due_skips_open_window():
     assert schedule.due(cfg(1), st, NOW) == ["a0"]
 
 
-def test_due_skips_live_session_and_just_warmed():
+def test_due_ignores_live_sessions_and_skips_just_warmed():
     live = {"sessions": {"s": {"account": "a0", "updated_at": NOW.timestamp() - 30}}}
-    assert schedule.due(cfg(1), live, NOW) == []
-    old = {"sessions": {"s": {"account": "a0", "updated_at": NOW.timestamp() - 600}}}
-    assert schedule.due(cfg(1), old, NOW) == ["a0"]
+    assert schedule.due(cfg(1), live, NOW) == ["a0"]
     warmed = {"accounts": {"a0": {"warmed_at": NOW.timestamp() - 600}}}
     assert schedule.due(cfg(1), warmed, NOW) == []
 
@@ -135,8 +133,7 @@ def test_chain_due_uses_recent_reset_and_keeps_gates():
     st["accounts"]["a0"]["five_hour"] = {"resets_at": None, "prev_resets_at": ts - 300}
     assert schedule.due(c, st, now) == ["a0"]
     st["sessions"] = {"s": {"account": "a0", "updated_at": ts - 30}}
-    assert schedule.due(c, st, now) == []
-    st["sessions"] = {}
+    assert schedule.due(c, st, now) == ["a0"]
     st["accounts"]["a0"]["five_hour"]["resets_at"] = ts + 300
     assert schedule.due(c, st, now) == []
     st["accounts"]["a0"]["five_hour"] = {"resets_at": ts - 3601}
