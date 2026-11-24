@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import shlex
 import shutil
 import signal
 import subprocess
@@ -142,6 +143,9 @@ def _plugin_dir() -> str:
 def _cpool_bin() -> str:
     # Nuitka sets __compiled__; there sys.executable is the binary and `-m cpool` is invalid.
     fallback = sys.executable if "__compiled__" in globals() else f"{sys.executable} -m cpool"
+    sibling = Path(sys.argv[0]).with_name("cpool")
+    if sibling.is_file() and os.access(sibling, os.X_OK):
+        fallback = shlex.quote(str(sibling))
     return shutil.which("cpool") or fallback
 
 
@@ -187,7 +191,8 @@ def _subscription_config(cfg):
                                       if a.enabled and usage.has_subscription(a) is not False))
 
 
-def _route(cfg, *, pinned: str | None, model: str | None, now: int, **kw) -> tuple[str, str, dict] | None:
+def route(cfg, *, pinned: str | None = None, model: str | None = None, now: int,
+          cwd: str | None = None, **kw) -> tuple[str, str, dict] | None:
     """(account, reason, scores) for the first launch, or None (message already printed)."""
     enabled = {a.name: a for a in cfg.accounts if a.enabled}
     eligible = _subscription_config(cfg)
@@ -209,7 +214,7 @@ def _route(cfg, *, pinned: str | None, model: str | None, now: int, **kw) -> tup
     if not members and enabled:
         _stderr(f"cpool: no account available (no subscription: {', '.join(enabled)})")
         return None
-    d = router.choose(st, eligible, model=model or "", cwd=os.getcwd(), now=now, **kw)
+    d = router.choose(st, eligible, model=model or "", cwd=cwd if cwd is not None else os.getcwd(), now=now, **kw)
     if d.account is not None:
         return d.account, d.reason, d.scores
     cands = [n for n in enabled if n in members and (accts.get(n) or {}).get("credits_enabled") is False
@@ -305,7 +310,7 @@ def main(argv: list[str]) -> int:
     print_mode = _is_print(args)
 
     now = int(time.time())
-    routed = _route(cfg, pinned=pinned, model=model, now=now)
+    routed = route(cfg, pinned=pinned, model=model, now=now)
     if routed is None:
         return 1
     acct_name, reason, scores = routed

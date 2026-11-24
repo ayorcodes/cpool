@@ -150,6 +150,20 @@ cpool switch                      # move the current session at the end of its t
 
 In print mode (`-p`) cpool never relaunches. The run finishes, and the next run goes to another account.
 
+### VS Code extension
+
+Point the Claude Code extension at the wrapper in `settings.json` (`which cpool-ide-exec` prints the path; the installer links `~/.local/bin/cpool-ide-exec`):
+
+```json
+{ "claudeCode.claudeProcessWrapper": "/Users/you/.local/bin/cpool-ide-exec" }
+```
+
+Each new chat or resume is routed to the best account, with no proxy: the wrapper sets that account's `CLAUDE_CONFIG_DIR` and execs the extension's own `claude`. Helper calls like `--version` or `plugin list` pass through untouched. If every enabled account is unusable (credits on, signed out, no subscription) the chat fails to start rather than run on the wrong account.
+
+Run `cpool ide setup` to check the prerequisites and print the `settings.json` entry (it never edits your settings).
+
+Run `cpool adopt ~/.claude --name main` first so the History list is shared across accounts. To switch accounts after a limit, close the chat and reopen it from History. There is no mid-chat handoff. This covers the webview panel, not `claudeCode.useTerminal: true`; use `cpool` in the terminal there.
+
 ### With cadre
 
 Set the role command to `cpool run --` and every role is routed through the pool. cadre needs no other change.

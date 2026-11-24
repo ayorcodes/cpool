@@ -195,7 +195,7 @@ def poll_due(cfg: Config, st: dict, now: int) -> list[str]:
     return due
 
 
-def kick(cfg: Config, now: int) -> bool:
+def kick(cfg: Config, now: int, *, wait_s: float = 0) -> bool:
     if cfg.pool.live_poll_s == 0:
         return False
     from .run import _cpool_bin
@@ -212,12 +212,17 @@ def kick(cfg: Config, now: int) -> bool:
             if previous is not None and 0 <= now - previous < cfg.pool.live_poll_s:
                 return False
             stamp.write_text(str(now))
-            subprocess.Popen([*shlex.split(_cpool_bin()), "poll", "--due"],
-                             start_new_session=True, stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return True
+            proc = subprocess.Popen([*shlex.split(_cpool_bin()), "poll", "--due"],
+                                    start_new_session=True, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except (OSError, ValueError):
         return False
+    if wait_s > 0 and proc is not None:
+        try:
+            proc.wait(timeout=wait_s)
+        except subprocess.TimeoutExpired:
+            pass
+    return True
 
 
 def poll(cfg: Config, now: int, *, due: bool = False) -> None:

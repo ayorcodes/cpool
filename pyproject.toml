@@ -15,6 +15,7 @@ dev = ["pytest"]
 
 [project.scripts]
 cpool = "cpool.cli:main"
+cpool-ide-exec = "cpool.ide_exec:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cpool"]

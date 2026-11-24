@@ -38,7 +38,16 @@ PYTHON="$(find_python)" || {
 echo "Using $PYTHON"
 # cpool/__main__.py uses a relative import, which fails as a Nuitka main module.
 ENTRY="$BUILD_TMP/cpool_entry.py"
-printf 'from cpool import cli\n\nraise SystemExit(cli.main())\n' > "$ENTRY"
+cat > "$ENTRY" <<'EOF'
+import os
+import sys
+
+from cpool import cli, ide_exec
+
+if os.path.basename(sys.argv[0]) == "cpool-ide-exec":
+    raise SystemExit(ide_exec.main())
+raise SystemExit(cli.main())
+EOF
 "$PYTHON" -m venv "$BUILD_VENV"
 "$BUILD_VENV/bin/pip" install --quiet --upgrade pip
 "$BUILD_VENV/bin/pip" install --quiet "nuitka==$NUITKA_VERSION" "$PKG_ROOT"
@@ -83,6 +92,8 @@ mkdir -p "$SMOKE_DIR"
     "$BIN" --help >/dev/null
     "$BIN" status >/dev/null
     "$BIN" advise --help >/dev/null
+    ln -s "$BIN" "$SMOKE_DIR/cpool-ide-exec"
+    "$SMOKE_DIR/cpool-ide-exec" /usr/bin/true --version
 )
 for f in cpool/plugin/hooks/hooks.json cpool/assets/ask-fable/SKILL.md; do
     [ -f "$DIST_OUT/$f" ] || { echo "error: dist is missing $f" >&2; exit 1; }

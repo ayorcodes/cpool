@@ -115,6 +115,28 @@ def test_kick_throttle_lock_and_unwritable_files(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+def test_kick_wait_releases_lock_and_leaves_slow_poller_running(tmp_path, monkeypatch):
+    import fcntl
+    import subprocess
+    monkeypatch.setenv("CPOOL_HOME", str(tmp_path))
+    cfg = config.Config(config.Pool(), ())
+    seen = {}
+
+    class Proc:
+        def wait(self, timeout):
+            seen["timeout"] = timeout
+            with (tmp_path / "poll.lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            raise subprocess.TimeoutExpired("cpool", timeout)
+
+        def kill(self):
+            pytest.fail("kick must not kill the detached poller")
+
+    monkeypatch.setattr(usage.subprocess, "Popen", lambda *a, **k: Proc())
+    assert usage.kick(cfg, 1000, wait_s=1.5) is True
+    assert seen == {"timeout": 1.5}
+
+
 def test_retry_after_from_http_extends_backoff(tmp_path, monkeypatch):
     import urllib.error
     from email.message import Message
