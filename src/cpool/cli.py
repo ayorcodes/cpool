@@ -76,6 +76,10 @@ def _parser() -> argparse.ArgumentParser:
     sh.add_parser("status", help="show shard routing and proxy availability")
     _shard_mgmt_parser(sh)
 
+    s = sub.add_parser("ide", help="VS Code extension integration")
+    ide = s.add_subparsers(dest="ide_cmd", required=True)
+    ide.add_parser("setup", help="check prerequisites and print the VS Code settings snippet")
+
     s = sub.add_parser("advise", help="ask the Fable advisor (API credits)")
     adv = s.add_subparsers(dest="advise_cmd", required=True)
     a = adv.add_parser("ask", help="ask a question with a facts file")
@@ -308,6 +312,68 @@ def _cmd_warm(due: bool, name: str | None) -> int:
     for a in targets:
         print(f"{a.name}: {'warmed' if warm.warm(a) else 'failed'}")
     return 0
+
+
+def _ide_exec_bin() -> str | None:
+    """Absolute path without resolving symlinks: Nuitka builds dispatch on the link's basename."""
+    if found := shutil.which("cpool-ide-exec"):
+        return os.path.abspath(found)
+    candidates = [Path(sys.argv[0]).expanduser().with_name("cpool-ide-exec")]
+    if "__compiled__" not in globals():
+        candidates.append(Path(sys.executable).with_name("cpool-ide-exec"))
+    for c in candidates:
+        if c.is_file() and os.access(c, os.X_OK):
+            return os.path.abspath(c)
+    return None
+
+
+def _cmd_ide_setup() -> int:
+    cfg = config.load()
+    bad = 0
+
+    def out(ok: bool, msg: str) -> None:
+        nonlocal bad
+        bad += not ok
+        print(("✓ " if ok else "✗ ") + msg)
+
+    adopt_hint = "run: cpool adopt ~/.claude --name main"
+    enabled = [a for a in cfg.accounts if a.enabled]
+    out(bool(enabled), f"{len(enabled)} enabled accounts" if enabled else f"no enabled accounts; {adopt_hint}")
+    default_dir = Path.home() / ".claude"
+    if not default_dir.is_dir():
+        out(False, f"~/.claude does not exist; {adopt_hint}")
+    elif problems := mirror.check(default_dir):
+        for problem in problems:
+            out(False, f"~/.claude: {problem}")
+        print(adopt_hint)
+    else:
+        out(True, f"~/.claude mirrored into {paths.shared_dir()}")
+    default_real = Path(os.path.realpath(default_dir))
+    for a in enabled:
+        d = accounts.storage_dir(a)
+        if d == default_real:
+            continue
+        if not d.is_dir():
+            out(False, f"{a.name}: storage dir {d} missing")
+            continue
+        for problem in mirror.check(d):
+            out(False, f"{a.name}: {problem}")
+    wrapper = _ide_exec_bin()
+    out(wrapper is not None, f"cpool-ide-exec: {wrapper}" if wrapper else "cpool-ide-exec not found on PATH")
+    plist = Path.home() / "Library" / "LaunchAgents" / f"{launchd.POLL}.plist"
+    poll = launchd.health(launchd.POLL) if plist.exists() else "plist missing"
+    if poll is None:
+        print(f"✓ launchd {launchd.POLL}")
+    else:
+        print(f"! launchd {launchd.POLL}: {poll} (optional: run 'cpool plan --apply' for background usage refresh)")
+    if wrapper:
+        print(
+            "\nAdd to VS Code settings.json (~/Library/Application Support/Code/User/settings.json):\n\n"
+            f'  "claudeCode.claudeProcessWrapper": {json.dumps(wrapper)}\n\n'
+            "This applies to the sidebar webview, not claudeCode.useTerminal: true. "
+            "After a limit, close and reopen the chat from History to switch accounts."
+        )
+    return 1 if bad else 0
 
 
 def _cmd_doctor() -> int:
@@ -580,6 +646,8 @@ def main(argv: list[str] | None = None) -> int:
                 return _cmd_doctor()
             case "shard":
                 return _shard_mgmt_key(args.action, args.check) if args.shard_cmd == "mgmt-key" else _cmd_shard(args.shard_cmd)
+            case "ide":
+                return _cmd_ide_setup()
             case "advise":
                 return _cmd_advise(args)
     except advisor.AdvisorError as e:
