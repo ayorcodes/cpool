@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/ayorcodes/cpool/main/install.sh | sh -s -- --uninstall
 #
 # Downloads a prebuilt binary into <home>/cpool.dist and links
-# ~/.local/bin/cpool to it. The link is a stable path, which cpool's launchd
+# ~/.local/bin/cpool and ~/.local/bin/cpool-ide-exec to it. The link is a stable path, which cpool's launchd
 # plists rely on. Re-run to upgrade.
 #
 # Env: CPOOL_SRC (local tarball path or URL, replaces the download),
@@ -60,21 +60,26 @@ main() {
     DIST="$HOME_DIR/cpool.dist"
     BIN_DIR="$HOME/.local/bin"
     LINK="$BIN_DIR/cpool"
+    IDE_LINK="$BIN_DIR/cpool-ide-exec"
 
     if [ "${1:-}" = "--uninstall" ]; then
-        if [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
-            die "$LINK is not a symlink; leaving it."
-        fi
-        rm -f "$LINK"
+        for l in "$LINK" "$IDE_LINK"; do
+            if [ -e "$l" ] && [ ! -L "$l" ]; then
+                die "$l is not a symlink; leaving it."
+            fi
+        done
+        rm -f "$LINK" "$IDE_LINK"
         rm -rf "$DIST" "$HOME_DIR/venv"
-        echo "Removed $LINK and $DIST."
+        echo "Removed $LINK, $IDE_LINK and $DIST."
         echo "Left in place: ~/.cpool state and any PATH block in your shell rc file."
         return 0
     fi
 
-    if [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
-        die "$LINK exists and is not a symlink; move it aside and re-run."
-    fi
+    for l in "$LINK" "$IDE_LINK"; do
+        if [ -e "$l" ] && [ ! -L "$l" ]; then
+            die "$l exists and is not a symlink; move it aside and re-run."
+        fi
+    done
 
     case "$(uname -m)" in
         arm64) ARCH=arm64 ;;
@@ -108,8 +113,9 @@ main() {
     mv "$DIST.new" "$DIST"
 
     mkdir -p "$BIN_DIR"
-    rm -f "$LINK"
+    rm -f "$LINK" "$IDE_LINK"
     ln -s "$DIST/cpool-bin" "$LINK"
+    ln -s "$DIST/cpool-bin" "$IDE_LINK"
 
     case ":$PATH:" in
         *":$BIN_DIR:"*) ;;
@@ -131,7 +137,7 @@ main() {
     done
 
     echo ""
-    echo "Installed: $LINK"
+    echo "Installed: $LINK, $IDE_LINK"
     echo "Next: cpool adopt ~/.claude --name main"
 }
 
