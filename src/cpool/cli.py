@@ -11,7 +11,7 @@ from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 
-from . import accounts, advisor, chain, codex, config, journal, launchd, mirror, paths, render, router, schedule, shard, shardacct, state, usage, warm
+from . import accounts, advisor, chain, codex, config, ide_settings, journal, launchd, mirror, paths, render, router, schedule, shard, shardacct, state, usage, warm
 
 
 class CliError(Exception):
@@ -78,7 +78,8 @@ def _parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("ide", help="VS Code extension integration")
     ide = s.add_subparsers(dest="ide_cmd", required=True)
-    ide.add_parser("setup", help="check prerequisites and print the VS Code settings snippet")
+    a = ide.add_parser("setup", help="check prerequisites and print the VS Code settings snippet")
+    a.add_argument("--write", action="store_true", help="write the setting into VS Code settings.json")
 
     s = sub.add_parser("advise", help="ask the Fable advisor (API credits)")
     adv = s.add_subparsers(dest="advise_cmd", required=True)
@@ -327,7 +328,41 @@ def _ide_exec_bin() -> str | None:
     return None
 
 
-def _cmd_ide_setup() -> int:
+_IDE_NOTE = (
+    "This applies to the sidebar webview, not claudeCode.useTerminal: true. "
+    "After a limit, close and reopen the chat from History to switch accounts."
+)
+
+
+def _print_ide_snippet(wrapper: str) -> None:
+    print(
+        "\nAdd to VS Code settings.json (~/Library/Application Support/Code/User/settings.json):\n\n"
+        f'  "{ide_settings.SETTING_KEY}": {json.dumps(wrapper)}\n\n{_IDE_NOTE}'
+    )
+
+
+def _write_ide_setting(wrapper: str) -> int:
+    path = ide_settings.vscode_settings_path()
+    try:
+        res = ide_settings.write_wrapper(wrapper, path)
+    except (ide_settings.SettingsError, OSError) as e:
+        print(f"✗ could not update {path}: {e}")
+        _print_ide_snippet(wrapper)
+        return 1
+    match res.status:
+        case "created":
+            print(f"✓ wrote {res.path}")
+        case "added":
+            print(f"✓ updated {res.path} (backup: {res.backup})")
+        case "updated":
+            print(f"✓ updated {res.path} (was {res.previous}; backup: {res.backup})")
+        case "already":
+            print(f"✓ {res.path} already sets {ide_settings.SETTING_KEY}")
+    print(f"\n{_IDE_NOTE}")
+    return 0
+
+
+def _cmd_ide_setup(write: bool = False) -> int:
     cfg = config.load()
     bad = 0
 
@@ -366,13 +401,13 @@ def _cmd_ide_setup() -> int:
         print(f"✓ launchd {launchd.POLL}")
     else:
         print(f"! launchd {launchd.POLL}: {poll} (optional: run 'cpool plan --apply' for background usage refresh)")
+    if write:
+        if bad:
+            print(f"\nNot writing {ide_settings.vscode_settings_path()}: fix the ✗ checks above and re-run with --write.")
+            return 1
+        return _write_ide_setting(wrapper)
     if wrapper:
-        print(
-            "\nAdd to VS Code settings.json (~/Library/Application Support/Code/User/settings.json):\n\n"
-            f'  "claudeCode.claudeProcessWrapper": {json.dumps(wrapper)}\n\n'
-            "This applies to the sidebar webview, not claudeCode.useTerminal: true. "
-            "After a limit, close and reopen the chat from History to switch accounts."
-        )
+        _print_ide_snippet(wrapper)
     return 1 if bad else 0
 
 
@@ -647,7 +682,7 @@ def main(argv: list[str] | None = None) -> int:
             case "shard":
                 return _shard_mgmt_key(args.action, args.check) if args.shard_cmd == "mgmt-key" else _cmd_shard(args.shard_cmd)
             case "ide":
-                return _cmd_ide_setup()
+                return _cmd_ide_setup(args.write)
             case "advise":
                 return _cmd_advise(args)
     except advisor.AdvisorError as e:
