@@ -183,3 +183,80 @@ def test_invalid_config_exits_2(env, capsys):
     (tmp / "cpool" / "config.toml").write_text("[[account\n")
     assert cli.main(["ide", "setup"]) == 2
     assert "invalid TOML" in capsys.readouterr().err
+
+
+KEY = "claudeCode.claudeProcessWrapper"
+
+
+def _settings(home):
+    return home / "Library" / "Application Support" / "Code" / "User" / "settings.json"
+
+
+def _ready(env, monkeypatch):
+    tmp, home = env
+    _mirrored(home)
+    _config(tmp, ("main", "default", True))
+    return _wrapper(monkeypatch, tmp / "bin"), _settings(home)
+
+
+def test_write_creates_then_reports_already(env, monkeypatch, capsys):
+    w, settings = _ready(env, monkeypatch)
+    assert cli.main(["ide", "setup", "--write"]) == 0
+    assert f"✓ wrote {settings}" in capsys.readouterr().out
+    assert json.loads(settings.read_text()) == {KEY: str(w)}
+    assert cli.main(["ide", "setup", "--write"]) == 0
+    assert f"✓ {settings} already sets {KEY}" in capsys.readouterr().out
+    assert not settings.with_name("settings.json.bak").exists()
+
+
+def test_write_preserves_comments_and_backs_up(env, monkeypatch, capsys):
+    w, settings = _ready(env, monkeypatch)
+    settings.parent.mkdir(parents=True)
+    original = '{\n  // my editor\n  "editor.fontSize": 14 // big\n}\n'
+    settings.write_text(original)
+    assert cli.main(["ide", "setup", "--write"]) == 0
+    assert settings.read_text() == f'{{\n  // my editor\n  "editor.fontSize": 14, // big\n  "{KEY}": "{w}"\n}}\n'
+    bak = settings.with_name("settings.json.bak")
+    assert bak.read_text() == original
+    assert f"(backup: {bak})" in capsys.readouterr().out
+
+
+def test_write_updates_stale_path(env, monkeypatch, capsys):
+    w, settings = _ready(env, monkeypatch)
+    settings.parent.mkdir(parents=True)
+    settings.write_text(f'{{\n  "{KEY}": "/stale/cpool-ide-exec" // old\n}}\n')
+    assert cli.main(["ide", "setup", "--write"]) == 0
+    assert settings.read_text() == f'{{\n  "{KEY}": "{w}" // old\n}}\n'
+    out = capsys.readouterr().out
+    assert "was /stale/cpool-ide-exec" in out
+    assert f"backup: {settings.with_name('settings.json.bak')}" in out
+
+
+def test_write_blocked_by_failed_check(env, monkeypatch, capsys):
+    tmp, home = env
+    (home / ".claude" / "projects").mkdir(parents=True)
+    _config(tmp, ("main", "default", True))
+    _wrapper(monkeypatch, tmp / "bin")
+    assert cli.main(["ide", "setup", "--write"]) == 1
+    out = capsys.readouterr().out
+    assert "Not writing" in out and "re-run with --write" in out
+    assert not (home / "Library" / "Application Support").exists()
+
+
+def test_write_proceeds_with_launchd_advisory(env, monkeypatch, capsys):
+    w, settings = _ready(env, monkeypatch)
+    assert cli.main(["ide", "setup", "--write"]) == 0
+    assert "! launchd com.cpool.poll: plist missing" in capsys.readouterr().out
+    assert json.loads(settings.read_text()) == {KEY: str(w)}
+
+
+def test_write_corrupt_settings_untouched_prints_snippet(env, monkeypatch, capsys):
+    w, settings = _ready(env, monkeypatch)
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{\n  "a": 1\n  "b": 2\n}\n')
+    assert cli.main(["ide", "setup", "--write"]) == 1
+    out = capsys.readouterr().out
+    assert f"✗ could not update {settings}" in out
+    assert _snippet(out) == str(w)
+    assert settings.read_text() == '{\n  "a": 1\n  "b": 2\n}\n'
+    assert not settings.with_name("settings.json.bak").exists()
